@@ -16,7 +16,7 @@ import {
   fmtDate,
   fmtUsd,
 } from '../components/ui';
-import { CONNECTION_LABEL } from './Dashboard';
+import { CONNECTION_LABEL } from '../labels';
 
 interface ProviderState {
   hasKey: boolean;
@@ -60,7 +60,7 @@ export function ModelsPage() {
       <ErrorBox error={provider.error?.message} />
       {p && (
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card title="Clé API">
+          <Card title="Clé API" icon={<KeyRound className="size-4" />}>
             <p className="mb-2 text-sm">
               État :{' '}
               {p.hasKey ? (
@@ -111,7 +111,7 @@ export function ModelsPage() {
                 </Button>
               )}
             </form>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-muted">
               La clé est stockée dans le Gestionnaire d’identification Windows. Elle n’est jamais renvoyée à
               l’interface ni écrite dans les journaux.
             </p>
@@ -120,6 +120,7 @@ export function ModelsPage() {
 
           <Card
             title="Test de connexion"
+            icon={<PlugZap className="size-4" />}
             actions={
               <Button
                 variant="primary"
@@ -131,7 +132,7 @@ export function ModelsPage() {
               </Button>
             }
           >
-            <p className="mb-2 text-xs text-slate-500">
+            <p className="mb-2 text-xs text-muted">
               Effectue un véritable appel : vérification de la clé (/key) puis une complétion minimale avec le
               modèle principal.
             </p>
@@ -142,7 +143,7 @@ export function ModelsPage() {
                   {CONNECTION_LABEL[t.status]?.[0] ?? t.status}
                 </Badge>
                 <p>{t.message}</p>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted">
                   {fmtDate(t.testedAt)} · {t.latencyMs ?? '—'} ms · modèle {t.model ?? '—'}
                 </p>
                 {t.key && (
@@ -244,7 +245,7 @@ function AssignmentsCard({
               label={label}
               hint={
                 warn(draft[role].modelId) ? (
-                  <span className="text-amber-600">⚠ {warn(draft[role].modelId)}</span>
+                  <span className="text-warning-fg">⚠ {warn(draft[role].modelId)}</span>
                 ) : role !== 'primary' ? (
                   'Vide = modèle principal'
                 ) : undefined
@@ -399,7 +400,7 @@ function CatalogCard({
       title={`Catalogue OpenRouter (${catalog?.models.length ?? 0} modèles)`}
       actions={
         <>
-          <span className="text-xs text-slate-500">Actualisé : {fmtDate(catalog?.fetchedAt)}</span>
+          <span className="text-xs text-muted">Actualisé : {fmtDate(catalog?.fetchedAt)}</span>
           <Button icon={<RefreshCw className="size-4" />} pending={refreshing} onClick={onRefresh}>
             Actualiser
           </Button>
@@ -425,7 +426,7 @@ function CatalogCard({
           />
           <div className="max-h-96 overflow-auto">
             <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-white text-slate-500 dark:bg-slate-900">
+              <thead className="sticky top-0 z-10 bg-solid text-faint">
                 <tr>
                   <th className="py-1 pr-2">Identifiant</th>
                   <th className="pr-2">Fournisseur</th>
@@ -436,7 +437,7 @@ function CatalogCard({
               </thead>
               <tbody>
                 {rows.map((m) => (
-                  <tr key={m.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <tr key={m.id} className="border-t border-line transition-colors hover:bg-raised">
                     <td className="py-1 pr-2">
                       <code>{m.id}</code>
                     </td>

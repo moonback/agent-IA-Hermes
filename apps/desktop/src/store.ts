@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { subscribe } from './api';
 import type { LiveEvent, MissionEvent } from './types';
 
-export type Page = 'dashboard' | 'chat' | 'missions' | 'computer' | 'agents' | 'models' | 'tools' | 'history';
+export type Page =
+  'dashboard' | 'chat' | 'missions' | 'computer' | 'agents' | 'models' | 'tools' | 'history' | 'settings';
 
 interface StreamText {
   agent: string | null;
@@ -13,7 +14,6 @@ interface StreamText {
 interface AppState {
   page: Page;
   selectedMissionId: string | null;
-  theme: 'dark' | 'light';
   connected: boolean;
   events: MissionEvent[];
   /** Streamed model output per mission (latest agent call only), never persisted. */
@@ -21,37 +21,18 @@ interface AppState {
   /** Incremented on every persisted event: hooks refetch when it changes. */
   revision: number;
   navigate: (page: Page, missionId?: string | null) => void;
-  toggleTheme: () => void;
   start: () => () => void;
 }
-
-const readTheme = (): 'dark' | 'light' => {
-  try {
-    return localStorage.getItem('hermes.theme') === 'light' ? 'light' : 'dark';
-  } catch {
-    return 'dark';
-  }
-};
 
 export const useApp = create<AppState>((set, get) => ({
   page: 'dashboard',
   selectedMissionId: null,
-  theme: readTheme(),
   connected: false,
   events: [],
   streams: {},
   revision: 0,
   navigate: (page, missionId) =>
     set({ page, selectedMissionId: missionId === undefined ? get().selectedMissionId : missionId }),
-  toggleTheme: () => {
-    const theme = get().theme === 'dark' ? 'light' : 'dark';
-    try {
-      localStorage.setItem('hermes.theme', theme);
-    } catch {
-      /* preference only */
-    }
-    set({ theme });
-  },
   start: () =>
     subscribe(
       ({ event, data }) => {

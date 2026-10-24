@@ -4,7 +4,7 @@
 
 ```
 ┌────────────── Tauri (Rust) ──────────────┐
-│ fenêtre WebView2 ── React (8 pages)       │
+│ fenêtre WebView2 ── React (9 pages)       │
 │ sidecar.rs : lance `node` + jeton aléatoire│
 └──────────────┬───────────────────────────┘
                │ HTTP + SSE, 127.0.0.1:port aléatoire, Bearer <jeton>
@@ -30,7 +30,7 @@
 - **SQLite intégré à Node (`node:sqlite`)** : aucune dépendance native à compiler.
 - **Coffre de secrets** : `@napi-rs/keyring` (Gestionnaire d'identification Windows, service « HERMES »). `OPENROUTER_API_KEY` reste prioritaire en développement.
 - **Pas de TanStack Query** : `useResource` recharge les données quand un événement persistant arrive (SSE).
-- **Composants maison** (Tailwind + lucide) accessibles au clavier.
+- **Composants maison** (Tailwind + lucide) accessibles au clavier, sur un design system à jetons CSS et trois thèmes (Glass Dark, Glass Light, Glass Cyberpunk) : voir [UI_GLASS_IMPLEMENTATION.md](UI_GLASS_IMPLEMENTATION.md).
 
 ## Agents
 

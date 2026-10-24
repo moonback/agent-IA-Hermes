@@ -1,165 +1,202 @@
-import { useResource } from '../hooks';
+import { useState, type ReactNode } from 'react';
+import {
+  Activity,
+  Bot,
+  Brain,
+  CircleCheck,
+  Coins,
+  ListChecks,
+  Monitor,
+  Send,
+  ShieldAlert,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
+import { api } from '../api';
+import { useAction, useResource } from '../hooks';
 import { useApp } from '../store';
-import type { Approval, Mission, MissionEvent, Status } from '../types';
-import { ApprovalCard, EventList } from '../components/shared';
+import type { AgentInfo, Approval, Mission, MissionEvent, Status } from '../types';
+import { connectionState } from '../labels';
+import { ApprovalCard, EventList, ProviderWarning } from '../components/shared';
+import { AgentCard, MissionCard } from '../components/cards';
 import {
   Badge,
+  Button,
   Card,
+  DataList,
   Empty,
   ErrorBox,
   Loading,
   PageHeader,
-  StatusBadge,
+  Stat,
+  Textarea,
   fmtDate,
   fmtUsd,
-  type Tone,
 } from '../components/ui';
 
-export const CONNECTION_LABEL: Record<string, [string, Tone]> = {
-  ok: ['Connecté (test réussi)', 'success'],
-  config_missing: ['Configuration manquante', 'warning'],
-  auth_invalid: ['Clé invalide ou accès refusé', 'danger'],
-  network: ['Problème réseau', 'danger'],
-  model_unavailable: ['Modèle indisponible', 'danger'],
-  insufficient_credits: ['Crédit insuffisant', 'danger'],
-  rate_limited: ['Limite de débit', 'warning'],
-  provider_error: ['Erreur fournisseur', 'danger'],
+const greeting = () => {
+  const h = new Date().getHours();
+  return h < 5 || h >= 18 ? 'Bonsoir' : 'Bonjour';
 };
 
 export function DashboardPage() {
   const status = useResource<Status>('/api/status');
-  const recent = useResource<Mission[]>('/api/missions?limit=8');
+  const recent = useResource<Mission[]>('/api/missions?limit=6');
   const approvals = useResource<Approval[]>('/api/approvals?status=pending');
   const events = useResource<MissionEvent[]>('/api/events?limit=25');
+  const agents = useResource<AgentInfo[]>('/api/agents');
+  const connected = useApp((s) => s.connected);
   const navigate = useApp((s) => s.navigate);
   const s = status.data;
 
-  const test = s?.provider.lastTest;
-  const [label, tone]: [string, Tone] = !s?.provider.hasKey
-    ? CONNECTION_LABEL.config_missing!
-    : test
-      ? (CONNECTION_LABEL[test.status] ?? ['Inconnu', 'neutral'])
-      : ['Clé présente, non testée', 'neutral'];
+  const pendingByMission = new Map<string, number>();
+  for (const a of approvals.data ?? [])
+    pendingByMission.set(a.missionId, (pendingByMission.get(a.missionId) ?? 0) + 1);
+
+  const [label, tone] = s ? connectionState(s.provider) : (['—', 'neutral'] as const);
+  const serviceLine = !connected
+    ? 'Le service local ne répond pas : les données affichées peuvent être anciennes.'
+    : s?.halted
+      ? 'Arrêt d’urgence actif : aucune action ne sera exécutée avant réarmement.'
+      : 'Service local opérationnel. Décrivez une mission : HERMES propose un plan que vous validez.';
 
   return (
     <>
-      <PageHeader title="Tableau de bord" subtitle="État réel du système, des missions et des workers" />
-      {status.loading && !s && <Loading />}
+      <PageHeader title="Tableau de bord" subtitle="État réel du système, des missions et des agents" />
       <ErrorBox error={status.error?.message} />
-      {s && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Card title="Système">
-            <ul className="space-y-1.5 text-sm">
-              <li className="flex justify-between">
-                <span>État</span>
-                {s.halted ? (
-                  <Badge tone="danger">arrêt d’urgence</Badge>
-                ) : (
-                  <Badge tone="success">opérationnel</Badge>
-                )}
-              </li>
-              <li className="flex justify-between">
-                <span>Démarrage du service</span>
-                <span>{s.startupMs} ms</span>
-              </li>
-              <li className="flex justify-between gap-2">
-                <span>Données</span>
-                <code className="truncate text-xs" title={s.dataDir}>
-                  {s.dataDir}
-                </code>
-              </li>
-            </ul>
-          </Card>
-          <Card title="OpenRouter">
-            <ul className="space-y-1.5 text-sm">
-              <li className="flex justify-between gap-2">
-                <span>Connexion</span>
-                <Badge tone={tone}>{label}</Badge>
-              </li>
-              <li className="flex justify-between">
-                <span>Dernier test</span>
-                <span>{fmtDate(test?.testedAt)}</span>
-              </li>
-              <li className="flex justify-between gap-2">
-                <span>Modèle principal</span>
-                <code className="truncate text-xs">
-                  {s.provider.assignments.primary?.modelId ?? 'non configuré'}
-                </code>
-              </li>
-              {test?.key && (
-                <li className="flex justify-between">
-                  <span>Crédit (clé)</span>
-                  <span>
-                    {fmtUsd(test.key.usageUsd)} utilisés
-                    {test.key.limitUsd != null ? ` / ${fmtUsd(test.key.limitUsd)}` : ''}
-                  </span>
-                </li>
-              )}
-            </ul>
-          </Card>
-          <Card title="Workers">
-            <ul className="space-y-1.5 text-sm">
-              {(
+
+      <section
+        aria-labelledby="welcome-title"
+        className="glass appear relative mb-4 grid gap-5 overflow-hidden rounded-panel p-5 lg:grid-cols-[1fr_20rem]"
+      >
+        <div className="min-w-0">
+          <h2 id="welcome-title" className="flex items-center gap-2 text-lg font-semibold">
+            <Sparkles className="size-5 text-accent-fg" aria-hidden /> {greeting()}
+          </h2>
+          <p className="mt-1 text-sm text-muted">{serviceLine}</p>
+          <QuickMission status={s} />
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              icon={<ListChecks className="size-4" />}
+              onClick={() => navigate('missions')}
+            >
+              Toutes les missions
+            </Button>
+            <Button
+              variant="ghost"
+              icon={<Monitor className="size-4" />}
+              onClick={() => navigate('computer')}
+            >
+              Observer le bureau
+            </Button>
+            <Button variant="ghost" icon={<Brain className="size-4" />} onClick={() => navigate('models')}>
+              Configurer les modèles
+            </Button>
+          </div>
+        </div>
+        <div className="min-w-0 rounded-card bg-raised p-3 ring-1 ring-line ring-inset">
+          <h3 className="mb-1 text-xs font-semibold tracking-wider text-faint uppercase">
+            Fournisseur et workers
+          </h3>
+          {status.loading && !s && <Loading />}
+          {s && (
+            <DataList
+              rows={[
+                ['OpenRouter', <Badge tone={tone}>{label}</Badge>],
+                ['Dernier test', fmtDate(s.provider.lastTest?.testedAt)],
                 [
-                  ['Bureau Windows (UI Automation)', s.workers.desktop],
-                  ['Navigateur (Playwright)', s.workers.browser],
-                  ['Recherche Web', s.workers.search],
-                ] as const
-              ).map(([name, a]) => (
-                <li key={name} className="flex justify-between gap-2" title={a.reason}>
-                  <span>{name}</span>
-                  <Badge tone={a.available ? 'success' : 'warning'}>
-                    {a.available ? 'disponible' : 'indisponible'}
-                  </Badge>
-                </li>
-              ))}
-              <li className="flex justify-between">
-                <span>Boucles actives</span>
-                <span>{s.workers.activeLoops}</span>
-              </li>
-            </ul>
-          </Card>
-          <Card title="Consommation IA (totale mesurée)">
-            <ul className="space-y-1.5 text-sm">
-              <li className="flex justify-between">
-                <span>Appels IA</span>
-                <span>{s.usage.aiCalls}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Coût mesuré</span>
-                <span>{fmtUsd(s.usage.costUsd)}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Missions réussies / échouées</span>
-                <span>
-                  {s.usage.outcomes.completed ?? 0} / {s.usage.outcomes.failed ?? 0}
-                </span>
-              </li>
-            </ul>
-          </Card>
-          <Card title={`Missions actives (${s.missions.active.length})`} className="lg:col-span-2">
-            {s.missions.active.length === 0 ? (
-              <Empty>Aucune mission en cours.</Empty>
-            ) : (
-              <ul className="space-y-1">
-                {s.missions.active.map((m) => (
-                  <li key={m.id}>
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 text-left text-sm hover:underline"
-                      onClick={() => navigate('missions', m.id)}
-                    >
-                      <StatusBadge status={m.status} /> <span className="truncate">{m.request}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+                  'Modèle principal',
+                  <code className="text-xs">
+                    {s.provider.assignments.primary?.modelId ?? 'non configuré'}
+                  </code>,
+                  s.provider.assignments.primary?.modelId,
+                ],
+                ...(
+                  [
+                    ['Bureau Windows', s.workers.desktop],
+                    ['Navigateur', s.workers.browser],
+                    ['Recherche Web', s.workers.search],
+                  ] as const
+                ).map(
+                  ([name, a]) =>
+                    [
+                      name,
+                      <Badge tone={a.available ? 'success' : 'warning'}>
+                        {a.available ? 'disponible' : 'indisponible'}
+                      </Badge>,
+                      a.reason,
+                    ] as [string, ReactNode, string?],
+                ),
+              ]}
+            />
+          )}
+        </div>
+      </section>
+
+      {s && (
+        <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
+          <Stat
+            label="Missions actives"
+            value={s.missions.active.length}
+            icon={<Activity className="size-4" />}
+            hint={`${s.workers.activeLoops} boucle(s) d’agent`}
+          />
+          <Stat
+            label="Décisions en attente"
+            value={s.missions.pendingApprovals}
+            icon={<ShieldAlert className="size-4" />}
+            tone={s.missions.pendingApprovals > 0 ? 'warning' : 'neutral'}
+          />
+          <Stat label="Appels IA mesurés" value={s.usage.aiCalls} icon={<Zap className="size-4" />} />
+          <Stat
+            label="Coût mesuré"
+            value={fmtUsd(s.usage.costUsd)}
+            icon={<Coins className="size-4" />}
+            tone="neutral"
+          />
+          <Stat
+            label="Réussies / échouées"
+            value={`${s.usage.outcomes.completed ?? 0} / ${s.usage.outcomes.failed ?? 0}`}
+            icon={<CircleCheck className="size-4" />}
+            tone="success"
+            hint={`${s.usage.agentRuns} exécution(s) d’agent`}
+          />
         </div>
       )}
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card title={`En attente d’approbation (${approvals.data?.length ?? 0})`}>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_24rem]">
+        <Card
+          title="Missions récentes"
+          icon={<ListChecks className="size-4" />}
+          actions={
+            <Button variant="ghost" onClick={() => navigate('missions')}>
+              Tout voir
+            </Button>
+          }
+        >
+          {recent.loading && !recent.data && <Loading />}
+          <ErrorBox error={recent.error?.message} />
+          {recent.data?.length === 0 && (
+            <Empty icon={<ListChecks className="size-5" />}>Aucune mission pour l’instant.</Empty>
+          )}
+          <div className="grid gap-3 md:grid-cols-2">
+            {recent.data?.map((m) => (
+              <MissionCard
+                key={m.id}
+                mission={m}
+                pendingApprovals={pendingByMission.get(m.id)}
+                onOpen={() => navigate('missions', m.id)}
+              />
+            ))}
+          </div>
+        </Card>
+
+        <Card
+          title={`En attente d’approbation (${approvals.data?.length ?? 0})`}
+          icon={<ShieldAlert className="size-4" />}
+        >
+          <ErrorBox error={approvals.error?.message} />
           {approvals.data?.length ? (
             <div className="space-y-2">
               {approvals.data.map((a) => (
@@ -167,34 +204,106 @@ export function DashboardPage() {
               ))}
             </div>
           ) : (
-            <Empty>Aucune action n’attend votre décision.</Empty>
+            <Empty icon={<CircleCheck className="size-5" />}>Aucune action n’attend votre décision.</Empty>
           )}
-        </Card>
-        <Card title="Dernières missions">
-          {recent.data?.length ? (
-            <ul className="space-y-1">
-              {recent.data.map((m) => (
-                <li key={m.id}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 text-left text-sm hover:underline"
-                    onClick={() => navigate('missions', m.id)}
-                  >
-                    <StatusBadge status={m.status} />
-                    <span className="truncate">{m.request}</span>
-                    <span className="ml-auto shrink-0 text-xs text-slate-500">{fmtDate(m.createdAt)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty>Aucune mission pour l’instant.</Empty>
-          )}
-        </Card>
-        <Card title="Activité récente" className="lg:col-span-2">
-          <EventList events={events.data ?? []} />
         </Card>
       </div>
+
+      <Card
+        className="mt-4"
+        title="Agents"
+        icon={<Bot className="size-4" />}
+        actions={
+          <Button variant="ghost" onClick={() => navigate('agents')}>
+            Détails
+          </Button>
+        }
+      >
+        {agents.loading && !agents.data && <Loading />}
+        <ErrorBox error={agents.error?.message} />
+        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          {agents.data?.map((a) => (
+            <AgentCard key={a.id} agent={a} compact />
+          ))}
+        </div>
+      </Card>
+
+      <Card className="mt-4" title="Activité récente" icon={<Activity className="size-4" />}>
+        <ErrorBox error={events.error?.message} />
+        <EventList events={events.data ?? []} />
+      </Card>
+
+      {s && (
+        <Card className="mt-4" title="Système">
+          <DataList
+            rows={[
+              [
+                'État',
+                s.halted ? (
+                  <Badge tone="danger">arrêt d’urgence</Badge>
+                ) : (
+                  <Badge tone="success">opérationnel</Badge>
+                ),
+              ],
+              ['Démarrage du service', `${s.startupMs} ms`],
+              ['Données', <code className="text-xs">{s.dataDir}</code>, s.dataDir],
+            ]}
+          />
+        </Card>
+      )}
     </>
+  );
+}
+
+/** Same creation call as the Chat page; the new mission then opens there with its plan. */
+function QuickMission({ status }: { status: Status | null }) {
+  const [text, setText] = useState('');
+  const navigate = useApp((s) => s.navigate);
+  const create = useAction(
+    (request: string) => api<Mission>('/api/missions', { body: { request } }),
+    (m) => {
+      setText('');
+      navigate('chat', m.id);
+    },
+  );
+  return (
+    <form
+      className="mt-4 space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (text.trim().length >= 2) void create.run(text.trim());
+      }}
+    >
+      <label htmlFor="quick-mission" className="sr-only">
+        Décrire une mission
+      </label>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <Textarea
+          id="quick-mission"
+          rows={2}
+          maxLength={8000}
+          value={text}
+          placeholder="Ex. : Classe les PDF du dossier de travail par année et prépare un rapport."
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey))
+              (e.currentTarget.form as HTMLFormElement).requestSubmit();
+          }}
+          className="min-h-[3.25rem] resize-y"
+        />
+        <Button
+          type="submit"
+          variant="primary"
+          icon={<Send className="size-4" />}
+          pending={create.pending}
+          disabled={text.trim().length < 2}
+          className="shrink-0 py-2"
+        >
+          Planifier la mission
+        </Button>
+      </div>
+      <ProviderWarning status={status} />
+      <ErrorBox error={create.error} />
+    </form>
   );
 }

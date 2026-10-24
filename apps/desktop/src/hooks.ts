@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from './api';
 import { useApp } from './store';
 
@@ -89,4 +89,17 @@ export function useAction<A extends unknown[], R>(fn: (...args: A) => Promise<R>
     [fn, onDone],
   );
   return { run, pending, error, clearError: () => setError(null) };
+}
+
+/** Tracks a CSS media query (window size, OS preferences); the listener is removed on unmount. */
+export function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      const mql = window.matchMedia(query);
+      mql.addEventListener('change', cb);
+      return () => mql.removeEventListener('change', cb);
+    },
+    [query],
+  );
+  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches);
 }

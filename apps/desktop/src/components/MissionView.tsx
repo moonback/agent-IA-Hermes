@@ -12,6 +12,7 @@ import {
   ErrorBox,
   Json,
   Loading,
+  ProgressBar,
   StatusBadge,
   fmtDate,
   fmtDuration,
@@ -53,13 +54,16 @@ export function MissionView({ missionId }: { missionId: string }) {
   const uncertain = tasks.filter((t) => t.status === 'blocked' && t.blockReason === 'uncertain_effect');
   const canStart = ['planned', 'paused', 'interrupted'].includes(m.status) && !active;
   const terminal = ['completed', 'failed', 'cancelled'].includes(m.status);
+  const doneTasks = tasks.filter((t) => t.status === 'completed').length;
 
   return (
     <div className="space-y-4">
       <Card
+        live={active && m.status === 'running'}
         title={
-          <span className="flex items-center gap-2">
-            Mission <code className="text-xs">{m.id}</code> <StatusBadge status={m.status} />
+          <span className="flex flex-wrap items-center gap-2">
+            Mission <code className="text-xs font-normal text-faint">{m.id}</code>{' '}
+            <StatusBadge status={m.status} />
             {active && <Badge tone="info">exécution active</Badge>}
           </span>
         }
@@ -105,25 +109,30 @@ export function MissionView({ missionId }: { missionId: string }) {
           </>
         }
       >
-        <p className="text-sm whitespace-pre-wrap">{m.request}</p>
-        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 sm:grid-cols-4 dark:text-slate-400">
+        <p className="text-base font-medium whitespace-pre-wrap">{m.request}</p>
+        {tasks.length > 0 && (
+          <div className="mt-3">
+            <ProgressBar value={doneTasks} max={tasks.length} label="Étapes terminées" />
+          </div>
+        )}
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 rounded-card bg-raised p-3 text-xs text-muted ring-1 ring-line ring-inset sm:grid-cols-4">
           <div>
             <dt>Créée</dt>
-            <dd>{fmtDate(m.createdAt)}</dd>
+            <dd className="mt-0.5 font-medium text-fg tabular-nums">{fmtDate(m.createdAt)}</dd>
           </div>
           <div>
             <dt>Durée</dt>
-            <dd>{fmtDuration(m.startedAt, m.endedAt)}</dd>
+            <dd className="mt-0.5 font-medium text-fg tabular-nums">{fmtDuration(m.startedAt, m.endedAt)}</dd>
           </div>
           <div>
             <dt>Appels IA / outils</dt>
-            <dd>
+            <dd className="mt-0.5 font-medium text-fg tabular-nums">
               {m.usage.aiCalls}/{m.budget.maxAiCalls} · {m.usage.toolCalls}/{m.budget.maxToolCalls}
             </dd>
           </div>
           <div>
             <dt>Coût</dt>
-            <dd>
+            <dd className="mt-0.5 font-medium text-fg tabular-nums">
               {fmtUsd(m.usage.costUsd)} / {fmtUsd(m.budget.maxCostUsd)}
               {!m.usage.costKnown && ' (partiellement inconnu)'}
             </dd>
@@ -170,7 +179,10 @@ export function MissionView({ missionId }: { missionId: string }) {
 
       {stream && (m.status === 'planning' || active) && (
         <Card title={`Sortie du modèle en direct${stream.agent ? ` — ${stream.agent}` : ''}`}>
-          <pre aria-live="polite" className="max-h-48 overflow-auto font-mono text-xs whitespace-pre-wrap">
+          <pre
+            aria-live="polite"
+            className="max-h-48 overflow-auto rounded-control bg-raised p-2 font-mono text-xs whitespace-pre-wrap ring-1 ring-line ring-inset"
+          >
             {stream.text || (stream.done ? '(appel d’outil, pas de texte)' : '…')}
           </pre>
         </Card>
@@ -187,7 +199,7 @@ export function MissionView({ missionId }: { missionId: string }) {
         <Card title="Étapes">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="text-xs text-slate-500">
+              <thead className="text-xs text-faint">
                 <tr>
                   <th className="py-1 pr-2">Étape</th>
                   <th className="pr-2">Agent</th>
@@ -224,7 +236,7 @@ export function MissionView({ missionId }: { missionId: string }) {
           </div>
           <p className="text-sm whitespace-pre-wrap">{m.result.summary}</p>
           {m.result.verification && (
-            <ul className="mt-2 list-disc pl-5 text-sm text-slate-600 dark:text-slate-300">
+            <ul className="mt-2 list-disc pl-5 text-sm text-muted">
               {m.result.verification.reasons.map((r) => (
                 <li key={r}>{r}</li>
               ))}
@@ -252,7 +264,7 @@ function TaskRow({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <tr className="border-t border-slate-100 align-top dark:border-slate-800">
+      <tr className="border-t border-line align-top transition-colors hover:bg-raised">
         <td className="py-1.5 pr-2">
           <button
             type="button"
@@ -261,7 +273,7 @@ function TaskRow({
             onClick={() => setOpen(!open)}
           >
             <code className="text-xs font-semibold">{t.stepId}</code>{' '}
-            <span className="text-slate-600 dark:text-slate-300">{t.objective.slice(0, 90)}</span>
+            <span className="text-muted">{t.objective.slice(0, 90)}</span>
           </button>
         </td>
         <td className="pr-2">
@@ -279,7 +291,7 @@ function TaskRow({
       {open && (
         <tr>
           <td colSpan={6} className="pb-3">
-            <div className="space-y-2 rounded-md bg-slate-50 p-3 dark:bg-slate-950">
+            <div className="space-y-2 rounded-card bg-raised p-3 ring-1 ring-line ring-inset">
               {t.error && (
                 <ErrorBox error={t.error} title={t.status === 'failed' ? 'Échec' : 'Dernier retour'} />
               )}
@@ -288,7 +300,7 @@ function TaskRow({
                   <p className="font-medium">Résumé de l’agent (affirmation, vérifiée séparément)</p>
                   <p className="whitespace-pre-wrap">{t.result.summary}</p>
                   {t.result.warnings.length > 0 && (
-                    <ul className="mt-1 list-disc pl-5 text-xs text-amber-700 dark:text-amber-300">
+                    <ul className="mt-1 list-disc pl-5 text-xs text-warning-fg">
                       {t.result.warnings.map((w) => (
                         <li key={w}>{w}</li>
                       ))}
@@ -296,7 +308,7 @@ function TaskRow({
                   )}
                 </div>
               )}
-              <p className="text-xs font-medium text-slate-500">
+              <p className="text-xs font-medium text-muted">
                 Preuves : appels d’outils enregistrés ({calls.length})
               </p>
               <ul className="space-y-1">
@@ -307,12 +319,8 @@ function TaskRow({
                         <code>{c.toolId}</code> <StatusBadge status={c.status} />
                         {c.verified === true && <Badge tone="success">post-condition vérifiée</Badge>}
                         {c.verified === false && <Badge tone="danger">non vérifiée</Badge>}
-                        <span className="text-slate-500">
-                          {c.durationMs != null ? `${c.durationMs} ms` : ''}
-                        </span>
-                        {c.error && (
-                          <span className="text-red-600 dark:text-red-400">{c.error.slice(0, 120)}</span>
-                        )}
+                        <span className="text-muted">{c.durationMs != null ? `${c.durationMs} ms` : ''}</span>
+                        {c.error && <span className="text-danger-fg">{c.error.slice(0, 120)}</span>}
                       </summary>
                       <div className="grid gap-2 md:grid-cols-2">
                         <Json value={c.input} />

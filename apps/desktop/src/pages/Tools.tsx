@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Plus, ShieldCheck, X } from 'lucide-react';
+import { FileLock2, Plus, ShieldCheck, Wrench, X } from 'lucide-react';
 import { api } from '../api';
 import { useAction, useResource } from '../hooks';
 import type { MissionEvent, Policy, ToolInfo } from '../types';
 import { EventList } from '../components/shared';
 import { Badge, Button, Card, ErrorBox, Field, Input, Loading, PageHeader, Select } from '../components/ui';
 
-const RISK_TONE = { low: 'success', medium: 'warning', high: 'danger' } as const;
+import { RISK_LABEL, RISK_TONE } from '../labels';
 
 export function ToolsPage() {
   const policy = useResource<Policy>('/api/policy', { live: false });
@@ -71,22 +71,24 @@ export function ToolsPage() {
               placeholder="example.com"
               onChange={(allowedDomains) => setDraft({ ...draft, allowedDomains })}
             />
-            <Field
-              id="unknown-domains"
-              label="Domaine non listé"
-              hint="« Demander » crée une approbation pour cet accès précis."
-            >
-              <Select
+            <div className="mt-4 border-t border-line pt-3">
+              <Field
                 id="unknown-domains"
-                value={draft.unknownDomains}
-                onChange={(e) =>
-                  setDraft({ ...draft, unknownDomains: e.target.value as Policy['unknownDomains'] })
-                }
+                label="Domaine non listé"
+                hint="« Demander » crée une approbation pour cet accès précis."
               >
-                <option value="ask">Demander une approbation</option>
-                <option value="deny">Refuser</option>
-              </Select>
-            </Field>
+                <Select
+                  id="unknown-domains"
+                  value={draft.unknownDomains}
+                  onChange={(e) =>
+                    setDraft({ ...draft, unknownDomains: e.target.value as Policy['unknownDomains'] })
+                  }
+                >
+                  <option value="ask">Demander une approbation</option>
+                  <option value="deny">Refuser</option>
+                </Select>
+              </Field>
+            </div>
           </Card>
           <ListEditor
             title="Commandes autorisées (process.run)"
@@ -123,12 +125,12 @@ export function ToolsPage() {
         </div>
       )}
 
-      <Card title="Catalogue des outils" className="mt-4">
+      <Card title="Catalogue des outils" icon={<Wrench className="size-4" />} className="mt-4">
         {tools.loading && !tools.data && <Loading />}
         <ErrorBox error={tools.error?.message} />
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="text-xs text-slate-500">
+            <thead className="text-xs text-faint">
               <tr>
                 <th className="py-1 pr-2">Outil</th>
                 <th className="pr-2">Disponibilité</th>
@@ -142,15 +144,15 @@ export function ToolsPage() {
             </thead>
             <tbody>
               {tools.data?.map((t) => (
-                <tr key={t.id} className="border-t border-slate-100 align-top dark:border-slate-800">
+                <tr key={t.id} className="border-t border-line align-top transition-colors hover:bg-raised">
                   <td className="py-1.5 pr-2">
                     <code className="text-xs font-semibold">{t.id}</code>
                     <details>
-                      <summary className="cursor-pointer text-xs text-slate-500">détails</summary>
+                      <summary className="cursor-pointer text-xs text-muted">détails</summary>
                       <p className="text-xs">{t.description}</p>
-                      <p className="text-xs text-slate-500">Vérification : {t.verification}</p>
-                      <p className="text-xs text-slate-500">Confirmation : {t.confirmation}</p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted">Vérification : {t.verification}</p>
+                      <p className="text-xs text-muted">Confirmation : {t.confirmation}</p>
+                      <p className="text-xs text-muted">
                         {t.reversible ? 'Réversible' : 'Irréversible'} ·{' '}
                         {t.idempotent ? 'idempotent' : 'protégé contre les doublons'} · délai{' '}
                         {t.timeoutMs / 1000} s
@@ -165,11 +167,11 @@ export function ToolsPage() {
                       {t.availability.available ? 'disponible' : 'indisponible'}
                     </Badge>
                     {t.availability.reason && (
-                      <p className="max-w-56 text-xs text-slate-500">{t.availability.reason}</p>
+                      <p className="max-w-56 text-xs text-muted">{t.availability.reason}</p>
                     )}
                   </td>
                   <td className="pr-2">
-                    <Badge tone={RISK_TONE[t.risk]}>{t.risk}</Badge>
+                    <Badge tone={RISK_TONE[t.risk]}>{RISK_LABEL[t.risk]}</Badge>
                   </td>
                   <td className="pr-2 text-xs">{t.permissions.join(', ')}</td>
                   <td className="pr-2 text-xs">{t.allowedAgents.join(', ')}</td>
@@ -260,7 +262,7 @@ function ListEditor({
             />
           </li>
         ))}
-        {values.length === 0 && <li className="text-sm text-slate-500">Aucun élément.</li>}
+        {values.length === 0 && <li className="text-sm text-muted">Aucun élément.</li>}
       </ul>
       <form
         className="flex gap-2"
@@ -280,7 +282,7 @@ function ListEditor({
           Ajouter
         </Button>
       </form>
-      {hint && <p className="text-xs text-slate-500">{hint}</p>}
+      {hint && <p className="text-xs text-muted">{hint}</p>}
     </div>
   );
   return bare ? body : <Card title={title}>{body}</Card>;
@@ -301,6 +303,7 @@ function AuditCard() {
     <Card
       className="mt-4"
       title="Journal d’audit"
+      icon={<FileLock2 className="size-4" />}
       actions={
         <>
           <Select
