@@ -156,6 +156,7 @@ export interface ToolInfo {
 export interface AgentInfo {
   id: string;
   activeTasks: number;
+  activeMissionIds: string[];
   name: string;
   role: string;
   capabilities: string[];

@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
-  AGENTS,
+  AgentCustomization,
+  AgentId,
   API_KEY_NAME,
   BRAVE_KEY_NAME,
   TAVILY_KEY_NAME,
@@ -325,6 +326,14 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
   r.on('GET', '/api/agents', () => {
     const stats = store.agentStats();
     const assignments = rt.settings.assignments();
+    const activeMissions = new Map<string, string[]>();
+    for (const row of store.db
+      .prepare(
+        `SELECT DISTINCT agent, mission_id FROM tasks WHERE status IN ('running','waiting_approval') ORDER BY agent, mission_id`,
+      )
+      .all() as { agent: string; mission_id: string }[]) {
+      activeMissions.set(row.agent, [...(activeMissions.get(row.agent) ?? []), row.mission_id]);
+    }
     const busy = new Map(
       (
         store.db
@@ -338,8 +347,9 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
     const running = store.listMissions({ status: ['running'], limit: 100 }).length;
     busy.set('planner', planning);
     busy.set('orchestrator', running);
-    return Object.values(AGENTS).map((a) => ({
+    return Object.values(rt.agentDescriptors).map((a) => ({
       activeTasks: busy.get(a.id) ?? 0,
+      activeMissionIds: activeMissions.get(a.id) ?? [],
       id: a.id,
       name: a.name,
       role: a.role,
@@ -351,6 +361,44 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
       tools: a.executes ? toolsForAgent(a.id as never, rt.tools.values()).map((t) => t.id) : [],
       stats: stats.find((s) => s.agent === a.id) ?? null,
     }));
+  });
+  r.on('PATCH', '/api/agents/:id', ({ params, body }) => {
+    const id = AgentId.parse(params.id!);
+    const descriptor = rt.agentDescriptors[id];
+    const input = AgentCustomization.parse(body);
+    if (!descriptor.executes && (input.limits || input.modelRole))
+      throw new HermesError(
+        'INVALID_TRANSITION',
+        'Les limites et le rôle de modèle ne s’appliquent qu’aux agents exécutants',
+      );
+    if (descriptor.executes && (input.limits || input.modelRole)) {
+      const active = store.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM tasks WHERE agent = ? AND status IN ('running','waiting_approval')`,
+        )
+        .get(id) as { n: number };
+      if (active.n > 0)
+        throw new HermesError(
+          'INVALID_TRANSITION',
+          'Attendez la fin des tâches actives avant de modifier le modèle ou les limites de cet agent',
+        );
+    }
+    const customizations = store.getSetting<Record<string, unknown>>(
+      'app_settings',
+      'agent_customizations',
+      {},
+    );
+    const previous = AgentCustomization.parse(customizations[id] ?? {});
+    const updated = AgentCustomization.parse({ ...previous, ...input });
+    store.setSetting('app_settings', 'agent_customizations', { ...customizations, [id]: updated });
+    Object.assign(descriptor, updated);
+    rt.telemetry.record({
+      category: 'application',
+      type: 'agent.customized',
+      message: `Configuration de l’agent ${id} modifiée`,
+      data: { agentId: id, fields: Object.keys(input) },
+    });
+    return { updated: true, agent: descriptor };
   });
   r.on('GET', '/api/tools', async () => {
     const policy = rt.settings.policy();

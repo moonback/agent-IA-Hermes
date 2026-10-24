@@ -1,5 +1,23 @@
+import { z } from 'zod';
 import type { AgentId, ExecutorAgentId, ModelRole } from '../shared/contracts';
 import type { AnyTool } from '../tools/types';
+
+/** User-editable agent configuration. System prompts and tool permissions stay code-owned. */
+export const AgentCustomization = z
+  .object({
+    name: z.string().trim().min(2).max(60).optional(),
+    role: z.string().trim().min(2).max(400).optional(),
+    capabilities: z.array(z.string().trim().min(1).max(60)).max(12).optional(),
+    modelRole: z.enum(['primary', 'planning', 'execution', 'verification']).optional(),
+    limits: z
+      .object({
+        maxIterations: z.number().int().min(1).max(50),
+        maxToolCallsPerTask: z.number().int().min(1).max(100),
+      })
+      .optional(),
+  })
+  .strict();
+export type AgentCustomization = z.infer<typeof AgentCustomization>;
 
 export interface AgentDescriptor {
   id: AgentId;

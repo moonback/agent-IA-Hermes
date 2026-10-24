@@ -100,8 +100,30 @@ test('pages de supervision accessibles et réelles', async ({ page }) => {
     await nav(page, label);
     await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();
   }
+  await nav(page, 'Missions');
+  const missionSearch = page.getByRole('textbox', { name: 'Rechercher dans les missions' });
+  await missionSearch.fill('Écris');
+  await expect(page.getByText('Écris un rapport de test').first()).toBeVisible();
+  await missionSearch.fill('aucun-résultat-correspondant');
+  await expect(page.getByText('Aucune mission ne correspond à ces critères.')).toBeVisible();
+
   await nav(page, 'Outils et permissions');
   await expect(page.getByText('files.write', { exact: true })).toBeVisible();
   await nav(page, 'Agents');
   await expect(page.getByText('Vérificateur')).toBeVisible();
+  await page.getByRole('button', { name: 'Détails' }).click();
+  await expect(page.getByText('Sélectionnez un agent pour consulter sa fiche.')).toBeVisible();
+  await page.getByText('Vérificateur').first().click();
+  await expect(page.getByText('Outils déclarés')).toBeVisible();
+  await page.getByRole('button', { name: 'Modifier cet agent' }).click();
+  await page.getByLabel('Nom').fill('Vérificateur temporaire');
+  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  await expect(page.getByRole('heading', { name: 'Vérificateur temporaire · fiche agent' })).toBeVisible();
+  await page.getByRole('button', { name: 'Modifier cet agent' }).click();
+  await page.getByLabel('Nom').fill('Vérificateur');
+  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  await expect(page.getByRole('heading', { name: 'Vérificateur · fiche agent' })).toBeVisible();
+  await page.getByRole('button', { name: 'Orchestration' }).click();
+  await expect(page.getByRole('heading', { name: 'Registre d’orchestration' })).toBeVisible();
+  await expect(page.getByText(/Les liens affichés viennent des attributions réelles/)).toBeVisible();
 });

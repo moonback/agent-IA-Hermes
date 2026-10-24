@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import {
   EXECUTOR_AGENTS,
+  AgentId,
   MODEL_ROLES,
   MissionBudget,
   type ExecutorAgentId,
@@ -43,6 +44,7 @@ import { LlmGateway, ProviderSettings, type ModelAssignment } from './agents/llm
 import { Planner } from './agents/planner';
 import { Verifier } from './agents/verifier';
 import { ToolLoopAgent, type Agent } from './agents/tool-agent';
+import { AGENTS, AgentCustomization, type AgentDescriptor } from './agents/definitions';
 import { Orchestrator } from './orchestrator/orchestrator';
 import { Scheduler } from './scheduler/scheduler';
 import { ProactiveSettings } from './scheduler/triggers';
@@ -125,6 +127,23 @@ export async function createRuntime(opts: RuntimeOptions) {
   mkdirSync(opts.dataDir, { recursive: true });
   const logger = new Logger({ dir: join(opts.dataDir, 'logs'), console: opts.logToConsole });
   const store = new HermesStore(join(opts.dataDir, 'hermes.db'));
+  const agentDescriptors = Object.fromEntries(
+    Object.entries(AGENTS).map(([id, descriptor]) => [
+      id,
+      { ...descriptor, capabilities: [...descriptor.capabilities], limits: { ...descriptor.limits } },
+    ]),
+  ) as Record<AgentId, AgentDescriptor>;
+  const savedAgentCustomizations = store.getSetting<Record<string, unknown>>(
+    'app_settings',
+    'agent_customizations',
+    {},
+  );
+  for (const [id, customization] of Object.entries(savedAgentCustomizations)) {
+    const parsedId = AgentId.safeParse(id);
+    const parsedCustomization = AgentCustomization.safeParse(customization);
+    if (parsedId.success && parsedCustomization.success)
+      Object.assign(agentDescriptors[parsedId.data], parsedCustomization.data);
+  }
   const telemetry = new Telemetry(store, logger);
   let secrets: SecretStore;
   try {
@@ -506,7 +525,8 @@ export async function createRuntime(opts: RuntimeOptions) {
     return out;
   };
   const agents = {} as Record<ExecutorAgentId, Agent>;
-  for (const a of EXECUTOR_AGENTS) agents[a] = new ToolLoopAgent(a, gateway, toolExecutor, tools);
+  for (const a of EXECUTOR_AGENTS)
+    agents[a] = new ToolLoopAgent(a, gateway, toolExecutor, tools, agentDescriptors[a]);
   const orch = new Orchestrator({
     store,
     telemetry,
@@ -587,6 +607,7 @@ export async function createRuntime(opts: RuntimeOptions) {
     logger,
     secrets,
     settings,
+    agentDescriptors,
     provider,
     catalog: { get: loadCatalog, refresh: refreshCatalog },
     memoryIndex,
