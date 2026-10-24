@@ -353,6 +353,12 @@ export class HermesStore {
       .run(json(usage), nowIso(), id);
   }
 
+  deleteMission(id: string): boolean {
+    this.requireMission(id); // throws NOT_FOUND if missing
+    // ON DELETE CASCADE handles tasks, tool_calls, approvals, agent_runs, artifacts, mission_events
+    return Number(this.db.prepare('DELETE FROM missions WHERE id = ?').run(id).changes) > 0;
+  }
+
   // ---------------------------------------------------------------- tasks
 
   /** Creates all tasks of a validated plan atomically, with their dependency edges. */

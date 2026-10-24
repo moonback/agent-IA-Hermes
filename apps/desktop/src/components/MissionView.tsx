@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Download, Pause, Play, RotateCcw, Square } from 'lucide-react';
+import { Download, Pause, Play, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { api, downloadFile } from '../api';
 import { useAction, useResource } from '../hooks';
 import { useApp } from '../store';
@@ -37,6 +37,11 @@ export function MissionView({ missionId }: { missionId: string }) {
   const cancel = useAction(() => api(`/api/missions/${missionId}/cancel`, { body: {} }), reload);
   const exportReport = useAction(() =>
     downloadFile(`/api/missions/${missionId}/report`, `hermes-${missionId}.md`),
+  );
+  const { navigate } = useApp();
+  const deleteMission = useAction(
+    () => api(`/api/missions/${missionId}`, { method: 'DELETE' }),
+    () => navigate('missions', null),
   );
 
   const callsByTask = useMemo(() => {
@@ -106,6 +111,19 @@ export function MissionView({ missionId }: { missionId: string }) {
             >
               Rapport
             </Button>
+            {terminal && (
+              <Button
+                variant="ghost"
+                icon={<Trash2 className="size-4" />}
+                pending={deleteMission.pending}
+                onClick={() => {
+                  if (window.confirm('Supprimer définitivement cette mission et toutes ses données ?'))
+                    void deleteMission.run();
+                }}
+              >
+                Supprimer
+              </Button>
+            )}
           </>
         }
       >
@@ -139,7 +157,7 @@ export function MissionView({ missionId }: { missionId: string }) {
           </div>
         </dl>
         <div className="mt-3 space-y-2">
-          <ErrorBox error={start.error ?? pause.error ?? cancel.error ?? exportReport.error} />
+          <ErrorBox error={start.error ?? pause.error ?? cancel.error ?? exportReport.error ?? deleteMission.error} />
           {m.error && !terminal && <ErrorBox error={m.error} title="Attention" />}
         </div>
       </Card>

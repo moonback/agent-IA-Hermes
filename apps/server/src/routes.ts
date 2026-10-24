@@ -250,6 +250,19 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
       .parse(body ?? {});
     return orchestrator.cancel(params.id!, reason);
   });
+  r.on('DELETE', '/api/missions/:id', ({ params }) => {
+    store.requireMission(params.id!);
+    if (orchestrator.isActive(params.id!))
+      throw new HermesError('INVALID_TRANSITION', 'Annulez la mission avant de la supprimer');
+    store.deleteMission(params.id!);
+    rt.telemetry.record({
+      category: 'persistence',
+      level: 'warn',
+      type: 'mission.deleted',
+      message: `Mission ${params.id!} supprimée par l'utilisateur`,
+    });
+    return { deleted: true };
+  });
   r.on('GET', '/api/missions/:id/report', ({ params, res }) => {
     const m = store.requireMission(params.id!);
     const tasks = store.listTasks(m.id);
