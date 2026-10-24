@@ -1,3 +1,4 @@
+import { missionTitle } from '../labels';
 import { Bot, ChevronRight, Cpu } from 'lucide-react';
 import type { AgentInfo, Mission } from '../types';
 import { Badge, Code, ProgressBar, StatusBadge, cx, fmtDate, fmtDuration, fmtRelative } from './ui';
@@ -40,7 +41,7 @@ export function MissionCard({
           {fmtRelative(m.createdAt)}
         </span>
       </span>
-      <span className="line-clamp-2 text-sm font-medium break-words">{m.request}</span>
+      <span className="line-clamp-2 text-sm font-medium break-words">{missionTitle(m.request)}</span>
       {detail && <span className="line-clamp-2 text-xs break-words text-muted">{detail}</span>}
       {steps && steps.length > 0 && (
         <span className="block w-full">
@@ -181,7 +182,7 @@ export function MissionListItem({
           {fmtRelative(m.createdAt)}
         </span>
       </span>
-      <span className="line-clamp-2 break-words">{m.request}</span>
+      <span className="line-clamp-2 break-words">{missionTitle(m.request)}</span>
     </button>
   );
 }

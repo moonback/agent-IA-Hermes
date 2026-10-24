@@ -19,7 +19,11 @@
 │      │          ├─ Playwright Chromium (contexte isolé par mission)           │
 │      │          └─ worker PowerShell UI Automation (processus par appel)      │
 │      └─► Vérificateur indépendant (contrôles déterministes + modèle)          │
-│ LlmGateway ─► OpenRouterProvider ─► https://openrouter.ai/api/v1              │
+│ LlmGateway ─► fournisseur par rôle : OpenRouterProvider ─► openrouter.ai      │
+│                                      GeminiProvider ─► generativelanguage /   │
+│                                                        aiplatform.googleapis  │
+│ AudioBridge (voix) ─► GeminiLiveProvider ─► wss BidiGenerateContent           │
+│      └─► VoiceAgent ─► orchestrateur (jamais d'outil exécuté directement)     │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -34,17 +38,18 @@
 
 ## Agents
 
-| Agent         | Rôle                                                                                           | Outils                               |
-| ------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------ |
-| orchestrateur | crée la mission, ordonne le DAG, budgets, pause/reprise/annulation, consolidation              | —                                    |
-| planificateur | plan JSON validé (schéma + dépendances, cycles, outils autorisés et disponibles), 1 correction | —                                    |
-| ordinateur    | bureau Windows par UI Automation                                                               | screen.observe, desktop.*            |
-| fichiers      | recherche, lecture, écriture, déplacement                                                      | files.*                              |
-| navigateur    | pages Web par locators accessibles                                                             | browser.*                            |
-| code          | lecture, modification, commandes                                                               | files.*, process.run                 |
-| recherche     | recherche Web réelle, sources                                                                  | web.search, browser.navigate/extract |
-| mémoire       | consulter / proposer des souvenirs                                                             | memory.*                             |
-| vérificateur  | refuse toute réussite non prouvée                                                              | —                                    |
+| Agent         | Rôle                                                                                                 | Outils                                |
+| ------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| orchestrateur | crée la mission, ordonne le DAG, budgets, pause/reprise/annulation, consolidation                    | —                                     |
+| planificateur | plan JSON validé (schéma + dépendances, cycles, outils autorisés et disponibles), 1 correction       | —                                     |
+| ordinateur    | bureau Windows par UI Automation                                                                     | screen.observe, desktop.*             |
+| fichiers      | recherche, lecture, écriture, déplacement                                                            | files.*                               |
+| navigateur    | pages Web par locators accessibles                                                                   | browser.*                             |
+| code          | lecture, modification, commandes                                                                     | files.*, process.run                  |
+| recherche     | recherche Web réelle, sources                                                                        | web.search, browser.navigate/extract  |
+| mémoire       | consulter / proposer des souvenirs                                                                   | memory.*                              |
+| vérificateur  | refuse toute réussite non prouvée                                                                    | —                                     |
+| vocal         | conversation Gemini Live ; crée, lance (après confirmation orale), met en pause, annule des missions | outils de contrôle de l'orchestrateur |
 
 Chaque agent exécutant suit la même interface (`Agent.execute`) : boucle bornée (itérations, appels d'outils), prompt de rôle, outil de fin `task__complete`. Les résultats d'outils sont transmis au modèle comme **données non fiables**. Les outils `mission.pause`, `mission.cancel`, `mission.verify` sont toujours accessibles.
 
@@ -64,3 +69,7 @@ missions, tasks, task_dependencies, agent_runs, tool_calls, approvals, mission_e
 ## API locale (extrait)
 
 `GET /api/status`, `GET /api/stream` (SSE), `POST /api/missions`, `GET /api/missions/:id`, `POST /api/missions/:id/start|pause|cancel`, `GET /api/missions/:id/report`, `POST /api/approvals/:id`, `GET|PUT /api/policy`, `PUT /api/provider/key`, `POST /api/provider/test`, `POST /api/provider/models/refresh`, `PUT /api/provider/assignments/:role`, `POST /api/emergency-stop`, `POST /api/rearm`, `GET /api/diagnostics`, `GET|POST|PATCH|DELETE /api/memory`. Voir `apps/server/src/routes.ts`.
+
+## Voix et Gemini
+
+Voir [VOICE_GEMINI.md](VOICE_GEMINI.md) : fournisseur Gemini (REST et Live), rôle `voice`, fournisseur par rôle, WebSocket `/api/voice/stream` (ticket à usage unique), agent vocal et interface vocale.

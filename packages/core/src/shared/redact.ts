@@ -9,10 +9,12 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b(?:api[_-]?key|token|password|passwd|secret|cookie)\s*[=:]\s*["']?[^\s"'&,;]{4,}/gi,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub tokens
   /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key ids
+  /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API keys (Gemini, Vertex express)
+  /\bya29\.[0-9A-Za-z._-]{20,}/g, // Google OAuth access tokens
 ];
 
 const SENSITIVE_KEYS =
-  /^(authorization|api[_-]?key|apikey|token|access[_-]?token|refresh[_-]?token|password|passwd|secret|cookie|set-cookie|x-api-key)$/i;
+  /^(authorization|api[_-]?key|apikey|token|access[_-]?token|refresh[_-]?token|password|passwd|secret|cookie|set-cookie|x-api-key|x-goog-api-key)$/i;
 
 const extraSecrets = new Set<string>();
 

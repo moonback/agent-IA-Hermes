@@ -93,16 +93,16 @@ interface ModelProvider {
 }
 ```
 
-- [ ] Authentification via `GOOGLE_API_KEY` (coffre OS, nom `GEMINI_API_KEY`)
-- [ ] Support de l'API Gemini AI Studio REST (`https://generativelanguage.googleapis.com/v1beta/models/:model:generateContent`)
-- [ ] Support de Vertex AI REST (`https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT/...`) — optionnel mais recommandé pour quota et SLA
-- [ ] Streaming SSE via `streamGenerateContent`
-- [ ] Function calling : conversion `AnyTool` → `FunctionDeclaration` Gemini, retour `FunctionCall` → `ToolCall` HERMES
-- [ ] Grounding/citations (si disponible) → `UrlCitation`
-- [ ] Classement d'erreurs HTTP en `ProviderErrorKind` (cohérent avec `openrouter.ts`)
-- [ ] `validateGeminiKey()` analogue à `validateBaseUrl()` — refuse les URLs hors `googleapis.com` et `aiplatform.googleapis.com`
-- [ ] 23+ tests unitaires (simulé) cohérents avec `openrouter.test.ts`
-- [ ] Test de connexion réel dans la page Models de l'UI
+- [x] Authentification via `GOOGLE_API_KEY` (coffre OS, nom `GEMINI_API_KEY`)
+- [x] Support de l'API Gemini AI Studio REST (`https://generativelanguage.googleapis.com/v1beta/models/:model:generateContent`)
+- [x] Support de Vertex AI REST (`https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT/...`) — optionnel mais recommandé pour quota et SLA
+- [x] Streaming SSE via `streamGenerateContent`
+- [x] Function calling : conversion `AnyTool` → `FunctionDeclaration` Gemini, retour `FunctionCall` → `ToolCall` HERMES
+- [x] Grounding/citations (si disponible) → `UrlCitation`
+- [x] Classement d'erreurs HTTP en `ProviderErrorKind` (cohérent avec `openrouter.ts`)
+- [x] `validateGeminiKey()` analogue à `validateBaseUrl()` — refuse les URLs hors `googleapis.com` et `aiplatform.googleapis.com`
+- [x] 23+ tests unitaires (simulé) cohérents avec `openrouter.test.ts`
+- [x] Test de connexion réel dans la page Models de l'UI
 
 ### 2.2 GeminiLiveProvider — vocal WebSocket
 
@@ -130,21 +130,21 @@ interface GeminiLiveSession {
 }
 ```
 
-- [ ] Classe `GeminiLiveProvider` avec `openSession(config): Promise<GeminiLiveSession>`
-- [ ] Gestion de reconnexion automatique (backoff exponentiel, max 3 tentatives)
-- [ ] Timeout de session (30 min max côté Google) → reconnexion transparente avec reprise du contexte
-- [ ] Conversion tool calls Gemini ↔ HERMES (réutilise `createToolRegistry`)
-- [ ] Affective dialogue activé par défaut (3.8 Live) → paramètre `affectiveDialogue: boolean`
-- [ ] Streaming des transcriptions vers `telemetry.live()` (catégorie `voice`)
-- [ ] Tests unitaires avec WebSocket mock
+- [x] Classe `GeminiLiveProvider` avec `openSession(config): Promise<GeminiLiveSession>`
+- [x] Gestion de reconnexion automatique (backoff exponentiel, max 3 tentatives)
+- [x] Timeout de session (30 min max côté Google) → reconnexion transparente avec reprise du contexte
+- [x] Conversion tool calls Gemini ↔ HERMES (réutilise `createToolRegistry`)
+- [x] Affective dialogue activé par défaut (3.8 Live) → paramètre `affectiveDialogue: boolean`
+- [x] Streaming des transcriptions vers `telemetry.live()` (catégorie `voice`)
+- [x] Tests unitaires avec WebSocket mock
 
 ### 2.3 Intégration dans le runtime
 
-- [ ] Ajouter `GEMINI_API_KEY` dans `.env.example` et dans `KeyringSecretStore` (nom `GEMINI_API_KEY`)
-- [ ] Mettre à jour `runtime.ts` : `providerKind: 'openrouter' | 'gemini' | 'gemini-live'` dans les settings
-- [ ] `LlmGateway` : sélectionner le provider selon le rôle de modèle (`voice` → `GeminiLiveProvider`, `planning`/`execution`/`verification` → `GeminiProvider` ou `OpenRouterProvider`)
-- [ ] Ajouter un rôle de modèle `voice` dans `MODEL_ROLES` et `contracts.ts`
-- [ ] Page Models de l'UI : section "Gemini" avec champ clé, sélection du provider par rôle, statut de connexion Live
+- [x] Ajouter `GEMINI_API_KEY` dans `.env.example` et dans `KeyringSecretStore` (nom `GEMINI_API_KEY`)
+- [x] Mettre à jour `runtime.ts` : `providerKind: 'openrouter' | 'gemini' | 'gemini-live'` dans les settings
+- [x] `LlmGateway` : sélectionner le provider selon le rôle de modèle (`voice` → `GeminiLiveProvider`, `planning`/`execution`/`verification` → `GeminiProvider` ou `OpenRouterProvider`)
+- [x] Ajouter un rôle de modèle `voice` dans `MODEL_ROLES` et `contracts.ts`
+- [x] Page Models de l'UI : section "Gemini" avec champ clé, sélection du provider par rôle, statut de connexion Live
 
 ### 2.4 Interface vocale dans l'application desktop
 
@@ -163,28 +163,30 @@ Microphone (Tauri Web API)
   → Haut-parleur
 ```
 
-- [ ] Endpoint WebSocket `ws://127.0.0.1:PORT/api/voice/stream` dans `apps/server/src/routes.ts`
-- [ ] `AudioBridge` dans le core : gère la session Gemini Live, route les tool calls vers `ToolExecutor`, streame l'audio retour
-- [ ] Nouveau composant React `VoicePanel` :
+- [x] Endpoint WebSocket `ws://127.0.0.1:PORT/api/voice/stream` dans `apps/server/src/routes.ts`
+- [x] `AudioBridge` dans le core : gère la session Gemini Live, route les tool calls vers `ToolExecutor`, streame l'audio retour
+- [x] Nouveau composant React `VoicePanel` :
   - Bouton micro (push-to-talk et VAD continu)
   - Indicateur d'activité vocale (waveform animée)
   - Transcription en temps réel (user + agent)
   - Affichage de la mission en cours déclenchée par la voix
-  - Option avatar 24 FPS (vidéo MP4 stream via `response_modalities: ["VIDEO"]`)
-- [ ] VAD (Voice Activity Detection) côté client pour ne pas envoyer le silence
-- [ ] Barge-in : l'utilisateur peut interrompre la réponse vocale en cours
-- [ ] Commandes vocales spéciales : "Pause", "Annule", "Arrêt d'urgence", "Rapport"
-- [ ] Persistance de la session vocale : toutes les missions déclenchées par la voix apparaissent dans l'historique normal
-- [ ] Paramètre de voix (30 voix HD, 24 langues) dans la page Paramètres
+  - Option avatar 24 FPS (vidéo MP4 stream via `response_modalities: ["VIDEO"]`) — **non implémenté** (aucune sortie vidéo documentée dans l'API Live accessible ; voir docs/VOICE_GEMINI.md)
+- [x] VAD (Voice Activity Detection) côté client pour ne pas envoyer le silence
+- [x] Barge-in : l'utilisateur peut interrompre la réponse vocale en cours
+- [x] Commandes vocales spéciales : "Pause", "Annule", "Arrêt d'urgence", "Rapport"
+- [x] Persistance de la session vocale : toutes les missions déclenchées par la voix apparaissent dans l'historique normal
+- [x] Paramètre de voix (30 voix HD, 24 langues) dans la page Paramètres
 
 ### 2.5 Agent conversationnel vocal
 
-- [ ] Ajouter un agent `voice` (non-exécutant) dans `definitions.ts` : reçoit la transcription, décide si c'est une mission à créer, une question, une commande de contrôle
-- [ ] System prompt `voice` : concis et naturel (réponses courtes, confirmation vocale des actions risquées)
-- [ ] Intégration avec l'orchestrateur : `voice` peut appeler `orchestrator.createMission()`, `orchestrator.pause()`, `orchestrator.cancel()`, interroger `store`
-- [ ] Multi-tour : l'agent se souvient du contexte de la conversation vocale courante (window de 20 tours)
+- [x] Ajouter un agent `voice` (non-exécutant) dans `definitions.ts` : reçoit la transcription, décide si c'est une mission à créer, une question, une commande de contrôle
+- [x] System prompt `voice` : concis et naturel (réponses courtes, confirmation vocale des actions risquées)
+- [x] Intégration avec l'orchestrateur : `voice` peut appeler `orchestrator.createMission()`, `orchestrator.pause()`, `orchestrator.cancel()`, interroger `store`
+- [x] Multi-tour : l'agent se souvient du contexte de la conversation vocale courante (window de 20 tours)
 
 **Livrables :** GeminiProvider + GeminiLiveProvider fonctionnels, VoicePanel, agent vocal, tests 30+.
+
+> **État (24/10/2026)** : implémenté — 90 tests Vitest et 4 E2E ajoutés, tous contre des **simulations** du format documenté ; seule la réponse « clé invalide » des vrais serveurs Google (REST et Live) a été vérifiée. Écarts volontaires (interruption, appels d'outils via l'orchestrateur et non `ToolExecutor`, pas d'approbation à la voix) et limites : voir [docs/VOICE_GEMINI.md](docs/VOICE_GEMINI.md).
 
 ---
 

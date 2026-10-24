@@ -71,3 +71,6 @@ export function connectionState(provider: {
 
 export const RISK_TONE = { low: 'success', medium: 'warning', high: 'danger' } as const;
 export const RISK_LABEL = { low: 'faible', medium: 'moyen', high: 'élevé' } as const;
+
+/** Card title of a mission: its first paragraph (voice missions append context after a blank line). */
+export const missionTitle = (request: string): string => request.split(/\n\s*\n/)[0]!.trim() || request;

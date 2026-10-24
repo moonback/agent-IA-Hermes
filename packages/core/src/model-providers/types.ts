@@ -5,6 +5,8 @@ export interface ChatToolCall {
   id: string;
   type: 'function';
   function: { name: string; arguments: string };
+  /** Opaque Gemini "thought signature": must be sent back with the call on the next turn. */
+  thoughtSignature?: string;
 }
 
 export type ChatMessage =
@@ -41,7 +43,7 @@ export interface ChatUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  /** Cost reported by OpenRouter in USD credits; null when the API did not return it. */
+  /** Cost reported by the provider in USD (OpenRouter credits); null when the API did not return it. */
   costUsd: number | null;
 }
 

@@ -49,7 +49,9 @@ export interface ModelAssignment {
   modelId: string;
   fallbacks: string[];
 }
-export type Role = 'primary' | 'planning' | 'execution' | 'verification';
+export type Role = 'primary' | 'planning' | 'execution' | 'verification' | 'voice';
+export type TextRole = Exclude<Role, 'voice'>;
+export type RoleProviders = Record<TextRole, 'openrouter' | 'gemini'> & { voice: 'gemini-live' };
 export type Assignments = Record<Role, ModelAssignment | null>;
 
 export interface Status {
@@ -62,6 +64,13 @@ export interface Status {
     source: string | null;
     lastTest: ConnectionTest | null;
     assignments: Assignments;
+    roleProviders: RoleProviders;
+    gemini: {
+      hasKey: boolean;
+      source: string | null;
+      lastTest: ConnectionTest | null;
+      liveTest: ConnectionTest | null;
+    };
   };
   workers: { desktop: Availability; browser: Availability; search: Availability; activeLoops: number };
   unavailableTools: Record<string, string>;
@@ -96,6 +105,7 @@ export interface ModelInfo {
   provider: string;
   contextLength: number | null;
   inputModalities: string[];
+  outputModalities: string[];
   supportsTools: boolean;
   supportsStructuredOutputs: boolean;
   supportsImages: boolean;
@@ -164,3 +174,37 @@ export interface LiveEvent {
   agent?: string | null;
   data?: unknown;
 }
+
+export interface GeminiSettings {
+  backend: 'ai-studio' | 'vertex';
+  baseUrl: string;
+  vertexProject: string;
+  vertexLocation: string;
+  timeoutMs: number;
+  maxRetries: number;
+}
+
+export interface GeminiState {
+  hasKey: boolean;
+  source: string | null;
+  settings: GeminiSettings;
+  lastTest: ConnectionTest | null;
+  liveTest: ConnectionTest | null;
+}
+
+export interface VoiceSettings {
+  voiceName: string;
+  languageCode: string;
+  affectiveDialogue: boolean;
+  mode: 'vad' | 'ptt';
+  vadSensitivity: number;
+}
+
+export interface VoiceCatalog {
+  voices: { name: string; style: string }[];
+  languages: { code: string; label: string }[];
+  defaultModel: string;
+  model: string;
+}
+
+export type { VoiceServerEvent } from '@hermes/core/contracts';

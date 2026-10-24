@@ -13,6 +13,11 @@ import { HermesStore } from './persistence/store';
 import { Logger, Telemetry } from './observability/telemetry';
 import { KeyringSecretStore, LayeredSecretStore, type SecretStore } from './secrets/vault';
 import { OpenRouterProvider } from './model-providers/openrouter';
+import { GEMINI_DEFAULT_BASE_URL, GEMINI_LIVE_DEFAULT_URL, GeminiProvider } from './model-providers/gemini';
+import { GeminiLiveProvider, type WebSocketFactory } from './model-providers/gemini-live';
+import { AudioBridge, type VoiceSink } from './voice/audio-bridge';
+import { VoiceAgent } from './voice/voice-agent';
+import { DEFAULT_LIVE_MODEL, VoiceSettings } from './voice/catalog';
 import type { ModelInfo, ModelProvider } from './model-providers/types';
 import { PolicyConfig } from './policy-engine/policy';
 import { canonicalize } from './policy-engine/paths';
@@ -31,6 +36,32 @@ import { ToolLoopAgent, type Agent } from './agents/tool-agent';
 import { Orchestrator } from './orchestrator/orchestrator';
 
 export const API_KEY_NAME = 'OPENROUTER_API_KEY';
+/** Vault entry of the Google key; GOOGLE_API_KEY in the environment is also accepted (development). */
+export const GEMINI_KEY_NAME = 'GEMINI_API_KEY';
+
+export const PROVIDER_KINDS = ['openrouter', 'gemini', 'gemini-live'] as const;
+export type ProviderKind = (typeof PROVIDER_KINDS)[number];
+/** Text roles are served by OpenRouter or Gemini; the voice role always by Gemini Live. */
+export const RoleProviders = z
+  .object({
+    primary: z.enum(['openrouter', 'gemini']).default('openrouter'),
+    planning: z.enum(['openrouter', 'gemini']).default('openrouter'),
+    execution: z.enum(['openrouter', 'gemini']).default('openrouter'),
+    verification: z.enum(['openrouter', 'gemini']).default('openrouter'),
+    voice: z.literal('gemini-live').default('gemini-live'),
+  })
+  .strict();
+export type RoleProviders = z.infer<typeof RoleProviders>;
+
+export const GeminiSettings = z.object({
+  backend: z.enum(['ai-studio', 'vertex']).default('ai-studio'),
+  baseUrl: z.string().default(GEMINI_DEFAULT_BASE_URL),
+  vertexProject: z.string().max(30).default(''),
+  vertexLocation: z.string().max(30).default('us-central1'),
+  timeoutMs: z.number().int().min(5_000).max(600_000).default(90_000),
+  maxRetries: z.number().int().min(0).max(5).default(2),
+});
+export type GeminiSettings = z.infer<typeof GeminiSettings>;
 
 export const SearchSettings = z.object({ provider: z.enum(['none', 'openrouter-web']).default('none') });
 export type SearchSettings = z.infer<typeof SearchSettings>;
@@ -47,6 +78,11 @@ export interface RuntimeOptions {
   allowLoopbackProviderForTests?: boolean;
   desktop?: DesktopAdapter;
   browser?: BrowserService;
+  /** Tests only: Gemini Live WebSocket replacement and endpoint (loopback needs allowLoopbackProviderForTests). */
+  geminiWebSocketFactory?: WebSocketFactory;
+  geminiLiveUrl?: string;
+  /** Tests only: Gemini REST endpoint on loopback. */
+  geminiBaseUrl?: string;
   logToConsole?: boolean;
 }
 
@@ -72,6 +108,8 @@ export async function createRuntime(opts: RuntimeOptions) {
 
   // Late-bound pieces referenced by settings and tool services.
   let providerInstance: OpenRouterProvider | null = null;
+  let geminiInstance: GeminiProvider | null = null;
+  let liveInstance: GeminiLiveProvider | null = null;
   let executor: ToolExecutor | null = null;
   let orchestrator: Orchestrator | null = null;
 
@@ -119,6 +157,43 @@ export async function createRuntime(opts: RuntimeOptions) {
         data: s,
       });
       return s;
+    },
+    gemini: (): GeminiSettings => {
+      const s = GeminiSettings.parse(store.getSetting('provider_settings', 'gemini', {}));
+      return opts.geminiBaseUrl ? { ...s, baseUrl: opts.geminiBaseUrl } : s;
+    },
+    setGemini(input: unknown): GeminiSettings {
+      const s = GeminiSettings.parse(input);
+      // Validates endpoint, project and region now: a bad value is refused instead of redirecting the key.
+      geminiFrom(s);
+      store.setSetting('provider_settings', 'gemini', s);
+      geminiInstance = null;
+      telemetry.record({
+        category: 'provider',
+        type: 'provider.gemini_settings_updated',
+        message: `Paramètres Gemini mis à jour (${s.backend === 'vertex' ? `Vertex AI ${s.vertexProject}/${s.vertexLocation}` : 'Google AI Studio'})`,
+      });
+      return s;
+    },
+    roleProviders: (): RoleProviders =>
+      RoleProviders.parse(store.getSetting('app_settings', 'role_providers', {})),
+    setRoleProviders(input: unknown): RoleProviders {
+      const r = RoleProviders.parse({ ...settings.roleProviders(), ...(input as object) });
+      store.setSetting('app_settings', 'role_providers', r);
+      telemetry.record({
+        category: 'provider',
+        type: 'provider.roles_updated',
+        message: `Fournisseurs par rôle : ${Object.entries(r)
+          .map(([k, v]) => `${k} → ${v}`)
+          .join(', ')}`,
+      });
+      return r;
+    },
+    voice: (): VoiceSettings => VoiceSettings.parse(store.getSetting('app_settings', 'voice', {})),
+    setVoice(input: unknown): VoiceSettings {
+      const v = VoiceSettings.parse(input);
+      store.setSetting('app_settings', 'voice', v);
+      return v;
     },
     budget: (): MissionBudget => MissionBudget.parse(store.getSetting('app_settings', 'budget', {})),
     setBudget(input: unknown): MissionBudget {
@@ -171,20 +246,76 @@ export async function createRuntime(opts: RuntimeOptions) {
     }
     return providerInstance;
   };
+  const geminiKey = async (): Promise<string | null> =>
+    (await secrets.get(GEMINI_KEY_NAME)) ?? process.env.GOOGLE_API_KEY ?? null;
+  const geminiFrom = (s: GeminiSettings) =>
+    new GeminiProvider({
+      backend: s.backend,
+      baseUrl: s.baseUrl,
+      vertex: s.backend === 'vertex' ? { project: s.vertexProject, location: s.vertexLocation } : undefined,
+      timeoutMs: s.timeoutMs,
+      maxRetries: s.maxRetries,
+      getApiKey: geminiKey,
+      fetchImpl: opts.fetchImpl,
+      allowLoopbackForTests: opts.allowLoopbackProviderForTests,
+      logger,
+    });
+  const gemini = (): GeminiProvider => (geminiInstance ??= geminiFrom(settings.gemini()));
+  const geminiLive = (): GeminiLiveProvider =>
+    (liveInstance ??= new GeminiLiveProvider({
+      getApiKey: geminiKey,
+      url: opts.geminiLiveUrl ?? GEMINI_LIVE_DEFAULT_URL,
+      webSocketFactory: opts.geminiWebSocketFactory,
+      allowLoopbackForTests: opts.allowLoopbackProviderForTests,
+      telemetry,
+      logger,
+    }));
+  /** Text provider of a role; an unassigned role follows the primary role's provider, like its model. */
+  const providerFor = (role: ModelRole): ModelProvider => {
+    const kinds = settings.roleProviders();
+    const effective = role !== 'voice' && settings.assignments()[role] ? role : 'primary';
+    return kinds[effective as Exclude<ModelRole, 'voice'>] === 'gemini' ? gemini() : provider();
+  };
   const loadCatalog = (): CatalogState =>
     store.getSetting<CatalogState>('provider_settings', 'catalog', {
       models: [],
       fetchedAt: null,
       error: null,
     });
-  let catalogMap = new Map(loadCatalog().models.map((m) => [m.id, m]));
+  const loadGeminiCatalog = (): CatalogState =>
+    store.getSetting<CatalogState>('provider_settings', 'gemini_catalog', {
+      models: [],
+      fetchedAt: null,
+      error: null,
+    });
+  // OpenRouter ids are "vendor/model" and Gemini ids bare ("gemini-…"): one map holds both catalogs.
+  let catalogMap = new Map([...loadCatalog().models, ...loadGeminiCatalog().models].map((m) => [m.id, m]));
+  const refreshGeminiCatalog = async (): Promise<CatalogState> => {
+    const prev = loadGeminiCatalog();
+    try {
+      const models = await gemini().listModels();
+      const state: CatalogState = { models, fetchedAt: new Date().toISOString(), error: null };
+      store.setSetting('provider_settings', 'gemini_catalog', state);
+      for (const m of models) catalogMap.set(m.id, m);
+      telemetry.record({
+        category: 'provider',
+        type: 'catalog.gemini_refreshed',
+        message: `${models.length} modèles récupérés depuis Gemini`,
+      });
+      return state;
+    } catch (err) {
+      const state = { ...prev, error: errorMessage(err) };
+      store.setSetting('provider_settings', 'gemini_catalog', state);
+      return state;
+    }
+  };
   const refreshCatalog = async (): Promise<CatalogState> => {
     const prev = loadCatalog();
     try {
       const models = await provider().listModels();
       const state: CatalogState = { models, fetchedAt: new Date().toISOString(), error: null };
       store.setSetting('provider_settings', 'catalog', state);
-      catalogMap = new Map(models.map((m) => [m.id, m]));
+      catalogMap = new Map([...models, ...loadGeminiCatalog().models].map((m) => [m.id, m]));
       telemetry.record({
         category: 'provider',
         type: 'catalog.refreshed',
@@ -227,7 +358,7 @@ export async function createRuntime(opts: RuntimeOptions) {
         }),
     });
   const gateway = new LlmGateway({
-    provider: (): ModelProvider => provider(),
+    provider: providerFor,
     settings: settings.provider,
     assignment: (r) => settings.assignments()[r],
     catalog: () => catalogMap,
@@ -307,6 +438,23 @@ export async function createRuntime(opts: RuntimeOptions) {
     },
   });
   orchestrator = orch;
+
+  /** One voice conversation: a Gemini Live session bridged to the client sink and the voice agent. */
+  const createVoiceBridge = (sink: VoiceSink): AudioBridge => {
+    const v = settings.voice();
+    return new AudioBridge({
+      live: geminiLive(),
+      agent: new VoiceAgent({ orchestrator: orch, store, telemetry }),
+      telemetry,
+      sink,
+      settings: {
+        model: settings.assignments().voice?.modelId ?? DEFAULT_LIVE_MODEL,
+        voiceName: v.voiceName,
+        languageCode: v.languageCode,
+        affectiveDialogue: v.affectiveDialogue,
+      },
+    });
+  };
   const recovery = orch.recoverOnStartup();
   telemetry.record({
     category: 'application',
@@ -324,6 +472,11 @@ export async function createRuntime(opts: RuntimeOptions) {
     settings,
     provider,
     catalog: { get: loadCatalog, refresh: refreshCatalog },
+    gemini,
+    geminiLive,
+    geminiKey,
+    geminiCatalog: { get: loadGeminiCatalog, refresh: refreshGeminiCatalog },
+    createVoiceBridge,
     tools,
     executor: toolExecutor,
     approvals,

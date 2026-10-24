@@ -57,7 +57,7 @@ export function AgentsPage() {
       {support.length > 0 && (
         <section aria-labelledby="agents-support">
           <h2 id="agents-support" className="mb-2 text-sm font-semibold text-muted">
-            Planification et vérification ({support.length})
+            Planification, vérification et voix ({support.length})
           </h2>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {support.map((a) => (

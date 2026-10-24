@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hermes/core": "workspace:*",
+    "ws": "^8.22.0",
     "zod": "^4.6.7"
   }
 }

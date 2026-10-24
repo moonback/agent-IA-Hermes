@@ -9,6 +9,7 @@ import {
   type DesktopAdapter,
   type HermesRuntime,
   type MissionEvent,
+  type RuntimeOptions,
 } from '@hermes/core';
 import { mockFetch, scenarioHandler, type Scenario } from './mock-openrouter';
 
@@ -29,7 +30,7 @@ export interface TestRuntime {
 /** Isolated runtime: temp data dir, in-memory secret store, simulated OpenRouter, no real desktop. */
 export async function createTestRuntime(
   sc: Scenario | ((workspace: string) => Scenario) = {},
-  opts: { withKey?: boolean; desktop?: DesktopAdapter } = {},
+  opts: { withKey?: boolean; desktop?: DesktopAdapter; runtime?: Partial<RuntimeOptions> } = {},
 ): Promise<TestRuntime> {
   const dir = tempDir();
   const secrets = new MemorySecretStore();
@@ -42,6 +43,7 @@ export async function createTestRuntime(
     secrets,
     fetchImpl,
     desktop: opts.desktop ?? new UnavailableDesktopAdapter('désactivé pour les tests'),
+    ...opts.runtime,
   });
   rt.settings.setAssignment('primary', 'mock/model', []);
   await rt.catalog.refresh();

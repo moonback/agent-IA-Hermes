@@ -3,7 +3,16 @@ import { subscribe } from './api';
 import type { LiveEvent, MissionEvent } from './types';
 
 export type Page =
-  'dashboard' | 'chat' | 'missions' | 'computer' | 'agents' | 'models' | 'tools' | 'history' | 'settings';
+  | 'dashboard'
+  | 'chat'
+  | 'voice'
+  | 'missions'
+  | 'computer'
+  | 'agents'
+  | 'models'
+  | 'tools'
+  | 'history'
+  | 'settings';
 
 interface StreamText {
   agent: string | null;

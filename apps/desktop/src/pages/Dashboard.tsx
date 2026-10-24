@@ -106,6 +106,24 @@ export function DashboardPage() {
                 ['OpenRouter', <Badge tone={tone}>{label}</Badge>],
                 ['Dernier test', fmtDate(s.provider.lastTest?.testedAt)],
                 [
+                  'Gemini',
+                  !s.provider.gemini.hasKey ? (
+                    <Badge tone="neutral">non configuré</Badge>
+                  ) : s.provider.gemini.lastTest || s.provider.gemini.liveTest ? (
+                    <Badge
+                      tone={
+                        (s.provider.gemini.liveTest ?? s.provider.gemini.lastTest)!.ok ? 'success' : 'warning'
+                      }
+                    >
+                      {(s.provider.gemini.liveTest ?? s.provider.gemini.lastTest)!.ok
+                        ? 'test réussi'
+                        : 'test en échec'}
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral">clé présente, non testée</Badge>
+                  ),
+                ],
+                [
                   'Modèle principal',
                   <code className="text-xs">
                     {s.provider.assignments.primary?.modelId ?? 'non configuré'}

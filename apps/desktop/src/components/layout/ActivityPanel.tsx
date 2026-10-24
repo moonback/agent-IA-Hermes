@@ -1,3 +1,4 @@
+import { missionTitle } from '../../labels';
 import { Activity, ShieldAlert } from 'lucide-react';
 import { useApp } from '../../store';
 import type { Status } from '../../types';
@@ -78,7 +79,7 @@ export function ActivityPanel({ status }: { status: Status | null }) {
                     )}
                   >
                     <StatusBadge status={m.status} />
-                    <span className="line-clamp-2 break-words">{m.request}</span>
+                    <span className="line-clamp-2 break-words">{missionTitle(m.request)}</span>
                   </button>
                 </li>
               ))}

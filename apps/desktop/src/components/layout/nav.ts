@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ListChecks,
   MessageSquare,
+  Mic,
   Monitor,
   Settings,
   ShieldCheck,
@@ -25,6 +26,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
       { id: 'chat', label: 'Chat', icon: MessageSquare },
+      { id: 'voice', label: 'Assistant vocal', icon: Mic },
       { id: 'missions', label: 'Missions', icon: ListChecks },
     ],
   },

@@ -104,7 +104,8 @@ export interface GatewayChat {
 export class LlmGateway {
   constructor(
     private readonly deps: {
-      provider: () => ModelProvider;
+      /** Provider serving a role (OpenRouter or Gemini), chosen in the settings. */
+      provider: (role: ModelRole) => ModelProvider;
       settings: () => ProviderSettings;
       assignment: (role: ModelRole) => ModelAssignment | null;
       catalog: () => ReadonlyMap<string, ModelInfo>;
@@ -117,7 +118,7 @@ export class LlmGateway {
     if (!a?.modelId)
       throw new HermesError(
         'CONFIG',
-        `Aucun modèle OpenRouter configuré pour le rôle « ${role} » ni de modèle principal`,
+        `Aucun modèle configuré pour le rôle « ${role} » ni de modèle principal`,
       );
     return a;
   }
@@ -127,6 +128,11 @@ export class LlmGateway {
   }
 
   async chat(p: GatewayChat): Promise<ChatResponse> {
+    if (p.role === 'voice')
+      throw new HermesError(
+        'CONFIG',
+        'Le rôle « voice » est servi par une session Gemini Live, pas par une complétion',
+      );
     p.budget?.checkAi();
     const assignment = this.resolve(p.role);
     const info = this.modelInfo(assignment.modelId);
@@ -152,7 +158,7 @@ export class LlmGateway {
     const live = (type: string, data: unknown) =>
       this.deps.telemetry.live({ type, missionId: p.missionId, taskId: p.taskId, agent: p.agent, data });
     live('llm.start', { model: assignment.modelId });
-    const res = await this.deps.provider().chat(req, {
+    const res = await this.deps.provider(p.role).chat(req, {
       signal: p.signal,
       stream: p.stream ?? true,
       onDelta: (text) => live('llm.delta', { text }),

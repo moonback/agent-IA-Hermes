@@ -14,6 +14,7 @@ const transparency = (page: Page) =>
 const ROUTES = [
   'Tableau de bord',
   'Chat',
+  'Assistant vocal',
   'Missions',
   'Agents',
   'Ordinateur',

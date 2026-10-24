@@ -14,7 +14,8 @@ export default defineConfig({
     strictPort: true,
     host: '127.0.0.1',
     proxy: apiUrl
-      ? { '/api': { target: apiUrl, headers: { Authorization: `Bearer ${token ?? ''}` } } }
+      ? // ws: the voice stream is a WebSocket; it authenticates with its own single-use ticket.
+        { '/api': { target: apiUrl, ws: true, headers: { Authorization: `Bearer ${token ?? ''}` } } }
       : undefined,
   },
   build: { target: 'es2022', outDir: 'dist' },
