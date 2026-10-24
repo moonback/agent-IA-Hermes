@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Fenêtre principale : uniquement les permissions de base et la commande backend_info.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

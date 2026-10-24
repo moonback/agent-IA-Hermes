@@ -1,0 +1,57 @@
+# Tests
+
+Les tests marqués **simulé** utilisent un faux OpenRouter (`tests/helpers/mock-openrouter.ts`) qui reproduit le format documenté de l'API (JSON, flux SSE, erreurs). Ils prouvent la logique de HERMES, **pas** le fonctionnement de l'API réelle ni la qualité d'un vrai modèle.
+
+## Commandes
+
+```bash
+pnpm test
+```
+
+```bash
+pnpm test:e2e
+```
+
+```bash
+pnpm bench
+```
+
+## Contenu (108 tests Vitest + 6 E2E + 4 Rust)
+
+| Fichier                                     | Nb  | Nature                                                                                                                      | Couvre                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------- | --- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/unit/core-logic.test.ts`             | 16  | unitaire                                                                                                                    | transitions d'état, validation des plans (schéma, doublons, cycles, outils), budgets, masquage des secrets, arguments de commande                                                                                                                                                                          |
+| `tests/unit/policy-paths.test.ts`           | 11  | unitaire, système de fichiers réel                                                                                          | normalisation des chemins, traversée, UNC/ADS/noms réservés, jonctions, politique (domaines, commandes, applications, règles)                                                                                                                                                                              |
+| `tests/unit/openrouter.test.ts`             | 23  | unitaire, **simulé**                                                                                                        | URL de base, classification des erreurs HTTP, retries/temporisation, fallback ciblé, délai, annulation, réponse mal formée, flux SSE et appels d'outils, citations                                                                                                                                         |
+| `tests/integration/persistence.test.ts`     | 9   | intégration SQLite réelle                                                                                                   | migrations, transactions, audit en ajout seul et chaîné, détection de falsification, purge, approbations liées, mémoire, sauvegarde                                                                                                                                                                        |
+| `tests/integration/tools.test.ts`           | 14  | intégration, fichiers et processus **réels** (dossier temporaire)                                                           | search/read/write/move, collisions, approbations, refus, process.run sans shell, environnement épuré, annulation qui tue le processus, registre, journalisation                                                                                                                                            |
+| `tests/integration/orchestrator.test.ts`    | 12  | intégration, modèle **simulé**, outils réels                                                                                | mission complète vérifiée, refus d'une réussite non prouvée, verdict du modèle, plan invalide, dépendances, parallélisme, annulation, approbation, budget, pause/reprise, reprise après interruption, arrêt d'urgence                                                                                      |
+| `tests/integration/browser-desktop.test.ts` | 9   | Playwright Chromium **réel** sur un site local ; UI Automation **réelle** sur une fenêtre WinForms de test et le Bloc-notes | navigation, extraction, remplissage, clic, refus mot de passe, approbation bouton sensible, blocage de domaine ; observation + capture, saisie/clic sémantiques, repli clavier Unicode vérifié, fenêtre modifiée, application non autorisée                                                                |
+| `tests/security/security.test.ts`           | 14  | sécurité                                                                                                                    | hors périmètre, traversée, commandes malveillantes, outil inconnu, approbation détournée, double exécution, boucle infinie, injection de prompt (modèle compromis), réseau non autorisé, budget, fuite de clé (journaux, événements, base), service HTTP (jeton, origine, clé jamais renvoyée, validation) |
+| `tests/e2e/app.spec.ts`                     | 6   | E2E interface + service réel, modèle **simulé**                                                                             | démarrage, clé absente, configuration OpenRouter et erreur 402, création de mission + plan + exécution + événements + vérification, annulation, approbation + pause + reprise, pages                                                                                                                       |
+| `apps/desktop/src-tauri/src/sidecar.rs`     | 4   | Rust                                                                                                                        | ligne de démarrage du service, jeton aléatoire, chemins Windows « verbatim »                                                                                                                                                                                                                               |
+
+Notes :
+
+- Le test du Bloc-notes prend brièvement le premier plan (environ 1 s) ; une frappe clavier de l'utilisateur pendant ce temps peut faire échouer la vérification (comportement voulu : la relecture détecte l'écart).
+- La fenêtre WinForms de test est ouverte réduite pour ne pas capter la saisie de l'utilisateur.
+
+## Vérifications manuelles effectuées
+
+- Binaire release `hermes-desktop.exe` : service démarré depuis les ressources, tableau de bord réel affiché dans la fenêtre Tauri (lu via CDP), arrêt automatique du service à la fermeture (pas de processus orphelin).
+- Catalogue OpenRouter **réel** récupéré (endpoint public `/models`, sans clé) : 469 modèles.
+- **Réel, 24/10/2026** : test de connexion OpenRouter réussi (`openai/gpt-6-luna`, 1,05 s), puis mission « créer test-hermes.md dans workspace et lister le dossier ». Les deux premières exécutions ont révélé 4 défauts de vérification, corrigés et couverts par 3 tests de non-régression ; la 3ᵉ exécution a réussi (3 étapes vérifiées, verdict final « pass », 11 appels IA, 0,0026 $).
+
+## Performance (24/10/2026, Windows 10, Node 24.16, modèle simulé)
+
+| Mesure                                           | p50          | p95                                      |
+| ------------------------------------------------ | ------------ | ---------------------------------------- |
+| Démarrage du service empaqueté                   | ≈ 250–310 ms | ≈ 265–335 ms                             |
+| Création d'une mission (persistance)             | 2,6 ms       | 8,7 ms                                   |
+| Planification (avec modèle simulé)               | 36 ms        | 748 ms (1re mission : sonde des workers) |
+| Exécution + vérification d'une mission à 1 étape | 49 ms        | 80 ms                                    |
+| files.search sur 200 fichiers                    | 48 ms        | 58 ms                                    |
+| files.read                                       | 8,6 ms       | 11 ms                                    |
+| files.write + relecture                          | 12,4 ms      | 14,8 ms                                  |
+
+5 appels IA par mission simple (plan, 2 tours d'agent, vérification d'étape, vérification finale) ; 20/20 missions vérifiées ; mémoire du processus ≈ 160–215 Mo RSS. Ces chiffres excluent la latence d'un vrai modèle, qui dominera en usage réel. Aucune comparaison avant/après n'a été faite : ce sont des mesures de référence.

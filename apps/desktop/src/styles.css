@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', Consolas, monospace;
+  --color-accent-50: oklch(0.97 0.02 250);
+  --color-accent-400: oklch(0.7 0.15 250);
+  --color-accent-500: oklch(0.62 0.17 250);
+  --color-accent-600: oklch(0.55 0.18 250);
+}
+
+:root {
+  color-scheme: light;
+}
+.dark {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+}
+
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-accent-500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

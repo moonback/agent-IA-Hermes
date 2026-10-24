@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2023"],
+    "paths": {
+      "@hermes/core": ["./packages/core/src/index.ts"]
+    }
+  },
+  "include": ["packages/core/src", "apps/server/src", "tests", "vitest.config.ts", "scripts"]
+}

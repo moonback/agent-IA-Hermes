@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HERMES",
+  "version": "0.1.0",
+  "identifier": "com.hermes.desktop",
+  "build": {
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "pnpm --filter @hermes/desktop dev",
+    "beforeBuildCommand": "pnpm --filter @hermes/desktop build && pnpm --filter @hermes/server build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "HERMES",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../server/dist/": "server/",
+      "../../../workers/": "workers/"
+    }
+  }
+}

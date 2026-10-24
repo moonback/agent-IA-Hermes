@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+.env
+.env.local
+*.log
+test-results/
+playwright-report/
+.hermes-dev/
+coverage/
+apps/desktop/src-tauri/gen/
