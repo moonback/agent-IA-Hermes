@@ -1,8 +1,18 @@
 import { useMemo, useState } from 'react';
-import { KeyRound, PlugZap, RefreshCw, Trash2 } from 'lucide-react';
+import { AudioLines, KeyRound, PlugZap, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { useAction, useResource } from '../hooks';
-import type { Assignments, Catalog, ConnectionTest, MissionBudget, ProviderSettings, Role } from '../types';
+import type {
+  Assignments,
+  Catalog,
+  ConnectionTest,
+  GeminiSettings,
+  GeminiState,
+  MissionBudget,
+  ProviderSettings,
+  Role,
+  RoleProviders,
+} from '../types';
 import {
   Badge,
   Button,
@@ -13,10 +23,12 @@ import {
   Input,
   Loading,
   PageHeader,
+  Select,
+  type Tone,
   fmtDate,
   fmtUsd,
 } from '../components/ui';
-import { CONNECTION_LABEL } from './Dashboard';
+import { CONNECTION_LABEL } from '../labels';
 
 interface ProviderState {
   hasKey: boolean;
@@ -31,11 +43,19 @@ const ROLES: [Role, string][] = [
   ['planning', 'Planification'],
   ['execution', 'Exécution (agents)'],
   ['verification', 'Vérification'],
+  ['voice', 'Voix (Gemini Live)'],
 ];
+
+/** Gemini results never reuse OpenRouter's wording, so both cards stay distinguishable. */
+const geminiLabel = (status: string): [string, Tone] =>
+  status === 'ok' ? ['Test réussi', 'success'] : (CONNECTION_LABEL[status] ?? [status, 'neutral']);
 
 export function ModelsPage() {
   const provider = useResource<ProviderState>('/api/provider', { live: false });
   const catalog = useResource<Catalog>('/api/provider/models', { live: false });
+  const gemini = useResource<GeminiState>('/api/provider/gemini', { live: false });
+  const geminiCatalog = useResource<Catalog>('/api/provider/gemini/models', { live: false });
+  const roleProviders = useResource<RoleProviders>('/api/provider/role-providers', { live: false });
   const [key, setKey] = useState('');
   const saveKey = useAction(
     (apiKey: string) => api('/api/provider/key', { method: 'PUT', body: { apiKey } }),
@@ -54,13 +74,13 @@ export function ModelsPage() {
     <>
       <PageHeader
         title="Modèles et OpenRouter"
-        subtitle="Tous les appels IA de HERMES passent par OpenRouter"
+        subtitle="OpenRouter et Gemini : clés, modèle et fournisseur par rôle, tests de connexion réels"
       />
       {provider.loading && !p && <Loading />}
       <ErrorBox error={provider.error?.message} />
       {p && (
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card title="Clé API">
+          <Card title="Clé API" icon={<KeyRound className="size-4" />}>
             <p className="mb-2 text-sm">
               État :{' '}
               {p.hasKey ? (
@@ -111,7 +131,7 @@ export function ModelsPage() {
                 </Button>
               )}
             </form>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-muted">
               La clé est stockée dans le Gestionnaire d’identification Windows. Elle n’est jamais renvoyée à
               l’interface ni écrite dans les journaux.
             </p>
@@ -120,6 +140,7 @@ export function ModelsPage() {
 
           <Card
             title="Test de connexion"
+            icon={<PlugZap className="size-4" />}
             actions={
               <Button
                 variant="primary"
@@ -131,7 +152,7 @@ export function ModelsPage() {
               </Button>
             }
           >
-            <p className="mb-2 text-xs text-slate-500">
+            <p className="mb-2 text-xs text-muted">
               Effectue un véritable appel : vérification de la clé (/key) puis une complétion minimale avec le
               modèle principal.
             </p>
@@ -142,7 +163,7 @@ export function ModelsPage() {
                   {CONNECTION_LABEL[t.status]?.[0] ?? t.status}
                 </Badge>
                 <p>{t.message}</p>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted">
                   {fmtDate(t.testedAt)} · {t.latencyMs ?? '—'} ms · modèle {t.model ?? '—'}
                 </p>
                 {t.key && (
@@ -161,12 +182,29 @@ export function ModelsPage() {
             <ErrorBox error={test.error} />
           </Card>
 
-          <AssignmentsCard
-            key={JSON.stringify(p.assignments)}
-            assignments={p.assignments}
-            catalog={catalog.data}
-            onSaved={provider.reload}
-          />
+          {roleProviders.data && (
+            <AssignmentsCard
+              key={JSON.stringify([p.assignments, roleProviders.data])}
+              assignments={p.assignments}
+              providers={roleProviders.data}
+              catalog={catalog.data}
+              geminiCatalog={geminiCatalog.data}
+              onSaved={() => {
+                provider.reload();
+                roleProviders.reload();
+              }}
+            />
+          )}
+          {gemini.data ? (
+            <GeminiCard
+              state={gemini.data}
+              catalog={geminiCatalog.data}
+              onChanged={gemini.reload}
+              onCatalog={geminiCatalog.reload}
+            />
+          ) : (
+            <ErrorBox error={gemini.error?.message} title="Gemini indisponible" />
+          )}
           <ProviderSettingsCard
             key={JSON.stringify(p.settings)}
             settings={p.settings}
@@ -186,19 +224,25 @@ export function ModelsPage() {
   );
 }
 
+type Draft = Record<Role, { modelId: string; fallbacks: string }>;
+
 function AssignmentsCard({
   assignments,
+  providers,
   catalog,
+  geminiCatalog,
   onSaved,
 }: {
   assignments: Assignments;
+  providers: RoleProviders;
   catalog: Catalog | null;
+  geminiCatalog: Catalog | null;
   onSaved: () => void;
 }) {
-  const [draft, setDraft] = useState<Record<Role, { modelId: string; fallbacks: string }>>(() =>
-    toDraft(assignments),
-  );
+  const [draft, setDraft] = useState<Draft>(() => toDraft(assignments));
+  const [kinds, setKinds] = useState<RoleProviders>(providers);
   const save = useAction(async () => {
+    await api('/api/provider/role-providers', { method: 'PUT', body: kinds });
     for (const [role] of ROLES) {
       const d = draft[role];
       if (!d.modelId.trim()) continue;
@@ -214,11 +258,14 @@ function AssignmentsCard({
       });
     }
   }, onSaved);
-  const known = new Set(catalog?.models.map((m) => m.id));
-  const warn = (id: string) => {
-    if (!id || !catalog?.models.length) return null;
-    const m = catalog.models.find((x) => x.id === id);
+  const catalogOf = (role: Role) => (role === 'voice' || kinds[role] === 'gemini' ? geminiCatalog : catalog);
+  const warn = (role: Role, id: string) => {
+    const c = catalogOf(role);
+    if (!id || !c?.models.length) return null;
+    const m = c.models.find((x) => x.id === id);
     if (!m) return 'absent du catalogue actualisé';
+    if (role === 'voice')
+      return m.outputModalities.includes('audio') ? null : 'n’annonce pas la sortie audio (Live)';
     if (!m.supportsTools) return 'n’annonce pas les appels d’outils (requis pour les agents)';
     return null;
   };
@@ -232,58 +279,311 @@ function AssignmentsCard({
       }
     >
       <datalist id="model-ids">
-        {[...known].slice(0, 2000).map((id) => (
-          <option key={id} value={id} />
+        {(catalog?.models ?? []).slice(0, 2000).map((m) => (
+          <option key={m.id} value={m.id} />
+        ))}
+      </datalist>
+      <datalist id="gemini-model-ids">
+        {(geminiCatalog?.models ?? []).map((m) => (
+          <option key={m.id} value={m.id} />
         ))}
       </datalist>
       <div className="space-y-3">
-        {ROLES.map(([role, label]) => (
-          <div key={role} className="grid gap-2 sm:grid-cols-2">
-            <Field
-              id={`m-${role}`}
-              label={label}
-              hint={
-                warn(draft[role].modelId) ? (
-                  <span className="text-amber-600">⚠ {warn(draft[role].modelId)}</span>
-                ) : role !== 'primary' ? (
-                  'Vide = modèle principal'
-                ) : undefined
-              }
-            >
-              <Input
+        {ROLES.map(([role, label]) => {
+          const geminiRole = role === 'voice' || kinds[role] === 'gemini';
+          const w = warn(role, draft[role].modelId);
+          return (
+            <div key={role} className="grid gap-2 sm:grid-cols-[8.5rem_1fr_1fr]">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted" aria-hidden>
+                  Fournisseur
+                </p>
+                {role === 'voice' ? (
+                  <p className="py-1.5">
+                    <Badge tone="info" icon={<AudioLines className="size-3" aria-hidden />}>
+                      Gemini Live
+                    </Badge>
+                  </p>
+                ) : (
+                  <Select
+                    aria-label={`Fournisseur : ${role}`}
+                    value={kinds[role]}
+                    onChange={(e) =>
+                      setKinds({ ...kinds, [role]: e.target.value as 'openrouter' | 'gemini' })
+                    }
+                  >
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="gemini">Gemini</option>
+                  </Select>
+                )}
+              </div>
+              <Field
                 id={`m-${role}`}
-                list="model-ids"
-                placeholder="fournisseur/modèle"
-                value={draft[role].modelId}
-                onChange={(e) => setDraft({ ...draft, [role]: { ...draft[role], modelId: e.target.value } })}
-              />
-            </Field>
-            <Field
-              id={`f-${role}`}
-              label="Modèles de secours (virgules)"
-              hint="Utilisés seulement si le modèle est indisponible"
-            >
-              <Input
-                id={`f-${role}`}
-                list="model-ids"
-                value={draft[role].fallbacks}
-                onChange={(e) =>
-                  setDraft({ ...draft, [role]: { ...draft[role], fallbacks: e.target.value } })
+                label={label}
+                hint={
+                  w ? (
+                    <span className="text-warning-fg">⚠ {w}</span>
+                  ) : role === 'voice' ? (
+                    'Vide = gemini-3.8-live'
+                  ) : role !== 'primary' ? (
+                    'Vide = modèle principal (et son fournisseur)'
+                  ) : undefined
                 }
-              />
-            </Field>
-          </div>
-        ))}
+              >
+                <Input
+                  id={`m-${role}`}
+                  list={geminiRole ? 'gemini-model-ids' : 'model-ids'}
+                  placeholder={
+                    geminiRole ? (role === 'voice' ? 'gemini-3.8-live' : 'gemini-…') : 'fournisseur/modèle'
+                  }
+                  value={draft[role].modelId}
+                  onChange={(e) =>
+                    setDraft({ ...draft, [role]: { ...draft[role], modelId: e.target.value } })
+                  }
+                />
+              </Field>
+              {role === 'voice' ? (
+                <p className="self-end pb-2 text-xs text-faint">
+                  Pas de modèle de secours pour une session Live.
+                </p>
+              ) : (
+                <Field
+                  id={`f-${role}`}
+                  label="Modèles de secours (virgules)"
+                  hint="Utilisés seulement si le modèle est indisponible"
+                >
+                  <Input
+                    id={`f-${role}`}
+                    list={geminiRole ? 'gemini-model-ids' : 'model-ids'}
+                    value={draft[role].fallbacks}
+                    onChange={(e) =>
+                      setDraft({ ...draft, [role]: { ...draft[role], fallbacks: e.target.value } })
+                    }
+                  />
+                </Field>
+              )}
+            </div>
+          );
+        })}
       </div>
       <ErrorBox error={save.error} />
     </Card>
   );
 }
 
-function toDraft(a: Assignments) {
+function toDraft(a: Assignments): Draft {
   return Object.fromEntries(
     ROLES.map(([r]) => [r, { modelId: a[r]?.modelId ?? '', fallbacks: a[r]?.fallbacks.join(', ') ?? '' }]),
-  ) as Record<Role, { modelId: string; fallbacks: string }>;
+  ) as Draft;
+}
+
+function TestResult({ t, pending, label }: { t: ConnectionTest | null; pending: boolean; label: string }) {
+  if (pending) return <Loading label={`${label} en cours…`} />;
+  if (!t) return <p className="text-xs text-faint">{label} : jamais testé, état inconnu.</p>;
+  const [text, tone] = geminiLabel(t.status);
+  return (
+    <div className="space-y-1 text-sm">
+      <p className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted">{label}</span>
+        <Badge tone={tone}>{text}</Badge>
+      </p>
+      <p>{t.message}</p>
+      <p className="text-xs text-faint">
+        {fmtDate(t.testedAt)} · {t.latencyMs ?? '—'} ms · modèle {t.model ?? '—'}
+      </p>
+    </div>
+  );
+}
+
+function GeminiCard({
+  state,
+  catalog,
+  onChanged,
+  onCatalog,
+}: {
+  state: GeminiState;
+  catalog: Catalog | null;
+  onChanged: () => void;
+  onCatalog: () => void;
+}) {
+  const [key, setKey] = useState('');
+  const [cfg, setCfg] = useState<GeminiSettings>(state.settings);
+  const saveKey = useAction(
+    (apiKey: string) => api('/api/provider/gemini/key', { method: 'PUT', body: { apiKey } }),
+    () => {
+      setKey('');
+      onChanged();
+    },
+  );
+  const deleteKey = useAction(() => api('/api/provider/gemini/key', { method: 'DELETE' }), onChanged);
+  const saveCfg = useAction(
+    () => api('/api/provider/gemini/settings', { method: 'PUT', body: cfg }),
+    onChanged,
+  );
+  const test = useAction(() => api<ConnectionTest>('/api/provider/gemini/test', { body: {} }), onChanged);
+  const testLive = useAction(
+    () => api<ConnectionTest>('/api/provider/gemini/live-test', { body: {} }),
+    onChanged,
+  );
+  const refresh = useAction(
+    () => api<Catalog>('/api/provider/gemini/models/refresh', { body: {} }),
+    onCatalog,
+  );
+  const dirty = JSON.stringify(cfg) !== JSON.stringify(state.settings);
+  return (
+    <Card title="Gemini (Google)" icon={<Sparkles className="size-4" />} className="xl:row-span-2">
+      <div className="space-y-4">
+        <section className="space-y-2">
+          <p className="text-sm">
+            État :{' '}
+            {state.hasKey ? (
+              <Badge tone="success">
+                clé enregistrée ({state.source === 'env' ? 'variable d’environnement' : 'coffre du système'})
+              </Badge>
+            ) : (
+              <Badge tone="warning">aucune clé Gemini</Badge>
+            )}
+          </p>
+          <form
+            className="flex flex-wrap gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveKey.run(key);
+            }}
+          >
+            <label htmlFor="gemini-key" className="sr-only">
+              Clé API Gemini
+            </label>
+            <Input
+              id="gemini-key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="AIza… (ou jeton OAuth ya29.… pour Vertex AI)"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              className="min-w-48 flex-1"
+            />
+            <Button
+              type="submit"
+              variant="primary"
+              icon={<KeyRound className="size-4" />}
+              pending={saveKey.pending}
+              disabled={key.trim().length < 30}
+            >
+              Enregistrer la clé Gemini
+            </Button>
+            {state.hasKey && state.source !== 'env' && (
+              <Button
+                variant="danger"
+                icon={<Trash2 className="size-4" />}
+                pending={deleteKey.pending}
+                onClick={() => void deleteKey.run()}
+              >
+                Supprimer la clé Gemini
+              </Button>
+            )}
+          </form>
+          <p className="text-xs text-faint">
+            Stockée dans le Gestionnaire d’identification Windows (entrée GEMINI_API_KEY), envoyée uniquement
+            en en-tête à googleapis.com, jamais renvoyée à l’interface.
+          </p>
+          <ErrorBox error={saveKey.error ?? deleteKey.error} />
+        </section>
+
+        <section className="space-y-2 border-t border-line pt-3">
+          <Field id="gemini-backend" label="Point d’accès">
+            <Select
+              id="gemini-backend"
+              value={cfg.backend}
+              onChange={(e) => setCfg({ ...cfg, backend: e.target.value as GeminiSettings['backend'] })}
+            >
+              <option value="ai-studio">Google AI Studio (generativelanguage.googleapis.com)</option>
+              <option value="vertex">Vertex AI (quotas et SLA entreprise)</option>
+            </Select>
+          </Field>
+          {cfg.backend === 'vertex' && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field id="gemini-project" label="Projet Google Cloud">
+                <Input
+                  id="gemini-project"
+                  value={cfg.vertexProject}
+                  placeholder="mon-projet"
+                  onChange={(e) => setCfg({ ...cfg, vertexProject: e.target.value.trim() })}
+                />
+              </Field>
+              <Field id="gemini-location" label="Région Vertex AI">
+                <Input
+                  id="gemini-location"
+                  value={cfg.vertexLocation}
+                  placeholder="europe-west4 ou global"
+                  onChange={(e) => setCfg({ ...cfg, vertexLocation: e.target.value.trim() })}
+                />
+              </Field>
+            </div>
+          )}
+          <Button disabled={!dirty} pending={saveCfg.pending} onClick={() => void saveCfg.run()}>
+            Appliquer le point d’accès
+          </Button>
+          <ErrorBox error={saveCfg.error} />
+        </section>
+
+        <section className="space-y-3 border-t border-line pt-3">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              icon={<PlugZap className="size-4" />}
+              pending={test.pending}
+              disabled={!state.hasKey}
+              onClick={() => void test.run()}
+            >
+              Tester Gemini
+            </Button>
+            <Button
+              icon={<AudioLines className="size-4" />}
+              pending={testLive.pending}
+              disabled={!state.hasKey}
+              onClick={() => void testLive.run()}
+            >
+              Tester Gemini Live
+            </Button>
+          </div>
+          <p className="text-xs text-faint">
+            Appels réels : catalogue puis génération minimale avec le premier rôle routé vers Gemini ;
+            ouverture puis fermeture d’une session Live avec le modèle du rôle « voice ».
+          </p>
+          <TestResult t={test.pending ? null : state.lastTest} pending={test.pending} label="Complétion" />
+          <TestResult
+            t={testLive.pending ? null : state.liveTest}
+            pending={testLive.pending}
+            label="Session Live"
+          />
+          <ErrorBox error={test.error ?? testLive.error} />
+        </section>
+
+        <section className="space-y-2 border-t border-line pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm">
+              Catalogue Gemini : <b>{catalog?.models.length ?? 0}</b> modèle(s){' '}
+              <span className="text-xs text-faint">· {fmtDate(catalog?.fetchedAt)}</span>
+            </p>
+            <Button
+              icon={<RefreshCw className="size-4" />}
+              pending={refresh.pending}
+              disabled={!state.hasKey}
+              onClick={() => void refresh.run()}
+            >
+              Rafraîchir le catalogue Gemini
+            </Button>
+          </div>
+          <ErrorBox error={refresh.error ?? catalog?.error} title="Catalogue Gemini indisponible" />
+          <p className="text-xs text-faint">
+            Google ne publie pas les prix par l’API : le coût Gemini reste « inconnu ».
+          </p>
+        </section>
+      </div>
+    </Card>
+  );
 }
 
 function ProviderSettingsCard({ settings, onSaved }: { settings: ProviderSettings; onSaved: () => void }) {
@@ -399,7 +699,7 @@ function CatalogCard({
       title={`Catalogue OpenRouter (${catalog?.models.length ?? 0} modèles)`}
       actions={
         <>
-          <span className="text-xs text-slate-500">Actualisé : {fmtDate(catalog?.fetchedAt)}</span>
+          <span className="text-xs text-muted">Actualisé : {fmtDate(catalog?.fetchedAt)}</span>
           <Button icon={<RefreshCw className="size-4" />} pending={refreshing} onClick={onRefresh}>
             Actualiser
           </Button>
@@ -425,7 +725,7 @@ function CatalogCard({
           />
           <div className="max-h-96 overflow-auto">
             <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-white text-slate-500 dark:bg-slate-900">
+              <thead className="sticky top-0 z-10 bg-solid text-faint">
                 <tr>
                   <th className="py-1 pr-2">Identifiant</th>
                   <th className="pr-2">Fournisseur</th>
@@ -436,7 +736,7 @@ function CatalogCard({
               </thead>
               <tbody>
                 {rows.map((m) => (
-                  <tr key={m.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <tr key={m.id} className="border-t border-line transition-colors hover:bg-raised">
                     <td className="py-1 pr-2">
                       <code>{m.id}</code>
                     </td>

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { ZodError, z } from 'zod';
 import { HermesError, redact, redactString, errorMessage } from '@hermes/core';
@@ -12,6 +13,8 @@ export interface RequestContext {
 }
 
 type Handler = (ctx: RequestContext) => unknown | Promise<unknown>;
+/** WebSocket upgrade handler: authenticates the request itself (browsers cannot send Authorization). */
+export type UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer, url: URL) => void;
 
 interface Route {
   method: string;
@@ -22,6 +25,16 @@ interface Route {
 
 export class Router {
   private readonly routes: Route[] = [];
+  private readonly upgrades = new Map<string, UpgradeHandler>();
+
+  ws(path: string, handler: UpgradeHandler): this {
+    this.upgrades.set(path, handler);
+    return this;
+  }
+
+  matchUpgrade(path: string): UpgradeHandler | null {
+    return this.upgrades.get(path) ?? null;
+  }
 
   on(method: string, path: string, handler: Handler): this {
     const keys: string[] = [];
@@ -88,11 +101,19 @@ function tokenOk(header: string | undefined, token: string): boolean {
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
+/** Ends a refused upgrade with a plain HTTP status (no WebSocket is opened). */
+export function rejectUpgrade(socket: Duplex, status: number, message: string): void {
+  const body = JSON.stringify({ error: { code: status === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN', message } });
+  socket.end(
+    `HTTP/1.1 ${status} ${status === 401 ? 'Unauthorized' : status === 404 ? 'Not Found' : status === 409 ? 'Conflict' : 'Forbidden'}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+  );
+}
+
 export function createHttpServer(
   router: Router,
   opts: { token: string; allowedOrigins: string[]; onError: (err: unknown) => void },
 ) {
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     const origin = req.headers.origin;
     const originAllowed = origin !== undefined && opts.allowedOrigins.includes(origin);
     if (originAllowed) {
@@ -134,4 +155,23 @@ export function createHttpServer(
       if (!res.headersSent) send(res, status, { error: { code, message: redactString(errorMessage(err)) } });
     }
   });
+  // Same host and origin rules as HTTP; the route then checks its own single-use ticket.
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    socket.on('error', () => socket.destroy());
+    const host = (req.headers.host ?? '').replace(/:\d+$/, '');
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return rejectUpgrade(socket, 403, 'Hôte refusé');
+    const origin = req.headers.origin;
+    if (origin !== undefined && !opts.allowedOrigins.includes(origin))
+      return rejectUpgrade(socket, 403, 'Origine refusée');
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const handler = router.matchUpgrade(url.pathname);
+    if (!handler) return rejectUpgrade(socket, 404, 'Route inconnue');
+    try {
+      handler(req, socket, head, url);
+    } catch (err) {
+      opts.onError(err);
+      socket.destroy();
+    }
+  });
+  return server;
 }

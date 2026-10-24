@@ -5,6 +5,10 @@ import { z } from 'zod';
 import {
   AGENTS,
   API_KEY_NAME,
+  DEFAULT_LIVE_MODEL,
+  GEMINI_KEY_NAME,
+  GEMINI_LIVE_LANGUAGES,
+  GEMINI_VOICES,
   HermesError,
   MODEL_ROLES,
   MemoryKind,
@@ -19,6 +23,7 @@ import {
   type MissionEvent,
 } from '@hermes/core';
 import { HANDLED, Router } from './http';
+import { VoiceTickets, voiceStream } from './voice';
 
 const startedAt = Date.now();
 
@@ -35,6 +40,37 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
     return { hasKey: has, source: has ? src : null };
   };
   const lastTest = () => store.getSetting<ConnectionTestResult | null>('provider_settings', 'lastTest', null);
+  const geminiTest = (kind: 'rest' | 'live') =>
+    store.getSetting<ConnectionTestResult | null>(
+      'provider_settings',
+      kind === 'rest' ? 'geminiTest' : 'geminiLiveTest',
+      null,
+    );
+  const geminiKeySource = async () => {
+    const vault = await rt.secrets.get(GEMINI_KEY_NAME);
+    const has = Boolean(vault ?? process.env.GOOGLE_API_KEY);
+    const src =
+      !vault && process.env.GOOGLE_API_KEY
+        ? 'env'
+        : 'source' in rt.secrets && typeof rt.secrets.source === 'function'
+          ? (rt.secrets.source as (n: string) => string)(GEMINI_KEY_NAME)
+          : rt.secrets.kind;
+    return { hasKey: has, source: has ? src : null };
+  };
+  const geminiState = async () => ({
+    ...(await geminiKeySource()),
+    settings: rt.settings.gemini(),
+    lastTest: geminiTest('rest'),
+    liveTest: geminiTest('live'),
+  });
+  /** Model used to test Gemini: the first text role routed to Gemini that has a model. */
+  const geminiTestModel = () => {
+    const roles = rt.settings.roleProviders();
+    const a = rt.settings.assignments();
+    for (const role of ['primary', 'planning', 'execution', 'verification'] as const)
+      if (roles[role] === 'gemini' && a[role]?.modelId) return a[role]!.modelId;
+    return null;
+  };
 
   // ------------------------------------------------------------- system
   r.on('GET', '/api/status', async () => {
@@ -58,7 +94,13 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       startupMs: meta.startupMs,
       halted: rt.executor.isHalted,
-      provider: { ...(await keySource()), lastTest: lastTest(), assignments: rt.settings.assignments() },
+      provider: {
+        ...(await keySource()),
+        lastTest: lastTest(),
+        assignments: rt.settings.assignments(),
+        roleProviders: rt.settings.roleProviders(),
+        gemini: { ...(await geminiKeySource()), lastTest: geminiTest('rest'), liveTest: geminiTest('live') },
+      },
       workers: {
         desktop: await rt.desktop.availability(),
         browser: await rt.browser.availability(),
@@ -384,6 +426,81 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
     return rt.settings.assignments();
   });
   r.on('GET', '/api/provider/roles', () => MODEL_ROLES);
+  r.on('GET', '/api/provider/role-providers', () => rt.settings.roleProviders());
+  r.on('PUT', '/api/provider/role-providers', ({ body }) => rt.settings.setRoleProviders(body));
+
+  // ------------------------------------------------------------- Gemini (REST + Live)
+  r.on('GET', '/api/provider/gemini', () => geminiState());
+  r.on('PUT', '/api/provider/gemini/settings', ({ body }) => rt.settings.setGemini(body));
+  r.on('PUT', '/api/provider/gemini/key', async ({ body }) => {
+    const { apiKey } = z
+      .object({
+        // Google API key (AIza…) or, for Vertex AI, an OAuth access token (ya29.…).
+        apiKey: z.string().trim().min(30).max(4096).regex(/^\S+$/, 'la clé ne doit pas contenir d’espace'),
+      })
+      .parse(body);
+    registerSecret(apiKey);
+    await rt.secrets.set(GEMINI_KEY_NAME, apiKey);
+    store.setSetting('provider_settings', 'geminiTest', null);
+    store.setSetting('provider_settings', 'geminiLiveTest', null);
+    rt.telemetry.record({
+      category: 'security',
+      type: 'provider.gemini_key_saved',
+      message: 'Clé Gemini enregistrée dans le coffre du système',
+    });
+    return geminiKeySource();
+  });
+  r.on('DELETE', '/api/provider/gemini/key', async () => {
+    await rt.secrets.delete(GEMINI_KEY_NAME);
+    store.setSetting('provider_settings', 'geminiTest', null);
+    store.setSetting('provider_settings', 'geminiLiveTest', null);
+    rt.telemetry.record({
+      category: 'security',
+      level: 'warn',
+      type: 'provider.gemini_key_deleted',
+      message: 'Clé Gemini supprimée du coffre',
+    });
+    return geminiKeySource();
+  });
+  r.on('POST', '/api/provider/gemini/test', async () => {
+    const result = await rt.gemini().testConnection(geminiTestModel());
+    store.setSetting('provider_settings', 'geminiTest', result);
+    rt.telemetry.record({
+      category: 'provider',
+      level: result.ok ? 'info' : 'warn',
+      type: 'provider.gemini_test',
+      message: `Test Gemini : ${result.status} — ${result.message}`,
+    });
+    return result;
+  });
+  r.on('POST', '/api/provider/gemini/live-test', async () => {
+    const result = await rt
+      .geminiLive()
+      .testConnection(rt.settings.assignments().voice?.modelId ?? DEFAULT_LIVE_MODEL);
+    store.setSetting('provider_settings', 'geminiLiveTest', result);
+    rt.telemetry.record({
+      category: 'voice',
+      level: result.ok ? 'info' : 'warn',
+      type: 'provider.gemini_live_test',
+      message: `Test Gemini Live : ${result.status} — ${result.message}`,
+    });
+    return result;
+  });
+  r.on('GET', '/api/provider/gemini/models', () => rt.geminiCatalog.get());
+  r.on('POST', '/api/provider/gemini/models/refresh', () => rt.geminiCatalog.refresh());
+
+  // ------------------------------------------------------------- voice
+  const tickets = new VoiceTickets();
+  r.on('GET', '/api/voice/settings', () => rt.settings.voice());
+  r.on('PUT', '/api/voice/settings', ({ body }) => rt.settings.setVoice(body));
+  r.on('GET', '/api/voice/catalog', () => ({
+    voices: GEMINI_VOICES.map(([name, style]) => ({ name, style })),
+    languages: GEMINI_LIVE_LANGUAGES.map(([code, label]) => ({ code, label })),
+    defaultModel: DEFAULT_LIVE_MODEL,
+    model: rt.settings.assignments().voice?.modelId ?? DEFAULT_LIVE_MODEL,
+  }));
+  r.on('POST', '/api/voice/ticket', () => tickets.issue());
+  r.ws('/api/voice/stream', voiceStream(rt, tickets));
 
   // ------------------------------------------------------------- desktop (user-initiated observation)
   r.on('POST', '/api/desktop/observe', async () => {

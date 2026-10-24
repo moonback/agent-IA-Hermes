@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Camera } from 'lucide-react';
+import { AppWindow, Camera, History, Image, Monitor } from 'lucide-react';
 import { api, apiBlobUrl } from '../api';
 import { useAction, useResource } from '../hooks';
 import type { Artifact, MissionEvent, Status, ToolCallRecord } from '../types';
@@ -37,12 +37,12 @@ function Screenshot({ artifact }: { artifact: Artifact }) {
         <img
           src={src}
           alt={`Capture d’écran du ${fmtDate(artifact.createdAt)}`}
-          className="w-full rounded border border-slate-200 dark:border-slate-800"
+          className="w-full rounded-control border border-line"
         />
       ) : (
         <ErrorBox error={err} />
       )}
-      <figcaption className="text-xs text-slate-500">
+      <figcaption className="text-xs text-muted">
         Instantané pris le {fmtDate(artifact.createdAt)} — ce n’est pas une vue en direct.{' '}
         {artifact.description}
       </figcaption>
@@ -88,7 +88,7 @@ export function ComputerPage() {
       />
       <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
         <div className="space-y-4">
-          <Card title="Adaptateur bureau">
+          <Card title="Adaptateur bureau" icon={<Monitor className="size-4" />}>
             {desktop ? (
               <p className="flex flex-wrap items-center gap-2 text-sm">
                 <Badge tone={desktop.available ? 'success' : 'warning'}>
@@ -96,34 +96,36 @@ export function ComputerPage() {
                 </Badge>
                 Windows UI Automation via un worker PowerShell isolé (actions sémantiques uniquement, aucun
                 clic par coordonnées).
-                {desktop.reason && <span className="text-red-600">{desktop.reason}</span>}
+                {desktop.reason && <span className="text-danger-fg">{desktop.reason}</span>}
               </p>
             ) : (
               <Empty>État inconnu.</Empty>
             )}
             <ErrorBox error={observe.error} />
           </Card>
-          <Card title="Capture la plus récente">
+          <Card title="Capture la plus récente" icon={<Image className="size-4" />}>
             {latest ? (
               <Screenshot artifact={latest} />
             ) : (
-              <Empty>Aucune capture. Utilisez « Capturer maintenant ».</Empty>
+              <Empty icon={<Camera className="size-5" />}>
+                Aucune capture. Utilisez « Capturer maintenant ».
+              </Empty>
             )}
           </Card>
-          <Card title="Historique des interactions">
+          <Card title="Historique des interactions" icon={<History className="size-4" />}>
             {desktopCalls.length === 0 ? (
               <Empty>Aucune action bureau enregistrée.</Empty>
             ) : (
               <ul className="space-y-1 text-sm">
                 {desktopCalls.map((c) => (
                   <li key={c.id} className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs text-slate-500">{fmtDate(c.startedAt)}</span>
+                    <span className="font-mono text-xs text-muted">{fmtDate(c.startedAt)}</span>
                     <code className="text-xs">{c.toolId}</code>
                     <StatusBadge status={c.status} />
-                    <span className="truncate text-xs text-slate-500">
+                    <span className="truncate text-xs text-muted">
                       {JSON.stringify(c.input).slice(0, 140)}
                     </span>
-                    {c.error && <span className="text-xs text-red-600">{c.error.slice(0, 140)}</span>}
+                    {c.error && <span className="text-xs text-danger-fg">{c.error.slice(0, 140)}</span>}
                   </li>
                 ))}
               </ul>
@@ -131,17 +133,17 @@ export function ComputerPage() {
           </Card>
         </div>
         <div className="space-y-4">
-          <Card title="Fenêtres (dernière observation manuelle)">
+          <Card title="Fenêtres (dernière observation manuelle)" icon={<AppWindow className="size-4" />}>
             {obs ? (
               <ul className="space-y-1 text-sm">
-                <li className="text-xs text-slate-500">Observé le {fmtDate(obs.observedAt)}</li>
+                <li className="text-xs text-muted">Observé le {fmtDate(obs.observedAt)}</li>
                 {obs.windows.map((w) => (
                   <li key={w.handle} className="flex items-center gap-2">
                     {w.isForeground && <Badge tone="info">active</Badge>}
                     <span className="truncate" title={w.title}>
                       {w.title}
                     </span>
-                    <code className="ml-auto text-xs text-slate-500">{w.processName}</code>
+                    <code className="ml-auto text-xs text-muted">{w.processName}</code>
                   </li>
                 ))}
               </ul>

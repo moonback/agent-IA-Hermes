@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { ListChecks } from 'lucide-react';
 import { useResource } from '../hooks';
 import { useApp } from '../store';
 import type { Mission } from '../types';
 import { MissionView } from '../components/MissionView';
-import { Card, Empty, ErrorBox, Loading, PageHeader, Select, StatusBadge, fmtDate } from '../components/ui';
+import { MissionListItem } from '../components/cards';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Select } from '../components/ui';
 
 const FILTERS: [string, string][] = [
   ['', 'Toutes'],
@@ -27,6 +29,7 @@ export function MissionsPage() {
       />
       <div className="grid gap-4 xl:grid-cols-[22rem_1fr]">
         <Card
+          className="xl:sticky xl:top-0 xl:max-h-[calc(100vh-var(--topbar-height)-3rem)] xl:overflow-y-auto"
           title="Liste"
           actions={
             <Select
@@ -49,18 +52,11 @@ export function MissionsPage() {
           <ul className="space-y-1">
             {list.data?.map((m) => (
               <li key={m.id}>
-                <button
-                  type="button"
-                  aria-current={m.id === selectedMissionId || undefined}
-                  onClick={() => navigate('missions', m.id)}
-                  className="flex w-full flex-col gap-0.5 rounded p-2 text-left text-sm hover:bg-slate-100 aria-[current]:bg-slate-100 dark:hover:bg-slate-800 dark:aria-[current]:bg-slate-800"
-                >
-                  <span className="flex items-center gap-2">
-                    <StatusBadge status={m.status} />
-                    <span className="text-xs text-slate-500">{fmtDate(m.createdAt)}</span>
-                  </span>
-                  <span className="line-clamp-2">{m.request}</span>
-                </button>
+                <MissionListItem
+                  mission={m}
+                  selected={m.id === selectedMissionId}
+                  onSelect={() => navigate('missions', m.id)}
+                />
               </li>
             ))}
           </ul>
@@ -69,7 +65,11 @@ export function MissionsPage() {
           {selectedMissionId ? (
             <MissionView missionId={selectedMissionId} />
           ) : (
-            <Empty>Sélectionnez une mission.</Empty>
+            <Card>
+              <Empty icon={<ListChecks className="size-5" />}>
+                Sélectionnez une mission dans la liste pour voir son plan, ses étapes et ses preuves.
+              </Empty>
+            </Card>
           )}
         </div>
       </div>

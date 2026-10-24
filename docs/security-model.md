@@ -40,3 +40,12 @@ Bouton permanent en haut de l'interface : bloque toute nouvelle action, annule l
 ## Mémoire
 
 Les souvenirs sont masqués avant stockage ; les entrées créées par un agent sont « non validées » (confiance 0,3) ; les préférences ne sont ajoutées que par l'utilisateur ; tout est modifiable et supprimable dans _Historique et mémoire_.
+
+## Voix (Gemini Live)
+
+- L'agent vocal **n'exécute aucun outil** : il passe par l'orchestrateur. Toute action reste une mission planifiée, soumise à la politique, aux approbations, aux budgets et à l'audit.
+- Lancer ou annuler une mission demande une confirmation orale explicite (`confirmed: true`). Les **approbations ne se donnent jamais à la voix**, seulement à l'écran.
+- Les commandes spéciales ne se déclenchent que si l'énoncé entier est la commande. L'arrêt d'urgence vocal est immédiat, car il ne fait que réduire ce que HERMES peut faire.
+- Les transcriptions sont des données non fiables : nettoyées, plafonnées et étiquetées comme telles quand elles accompagnent une mission. Le texte prononcé n'est pas écrit dans le journal d'audit (seulement des compteurs).
+- Le WebSocket vocal suit les mêmes contrôles d'hôte et d'origine que l'API. Il exige un ticket à usage unique de 30 s obtenu avec le jeton de session. Une seule session à la fois, trames limitées à 64 Kio.
+- La clé Google est stockée dans le coffre (`GEMINI_API_KEY`) et envoyée uniquement en en-tête vers `*.googleapis.com` (URL validées). Elle est masquée dans les journaux et jamais renvoyée à l'interface.

@@ -34,11 +34,11 @@ export const EXECUTOR_AGENTS = ['computer', 'files', 'browser', 'code', 'researc
 export const ExecutorAgentId = z.enum(EXECUTOR_AGENTS);
 export type ExecutorAgentId = z.infer<typeof ExecutorAgentId>;
 
-export const AGENT_IDS = ['orchestrator', 'planner', 'verifier', ...EXECUTOR_AGENTS] as const;
+export const AGENT_IDS = ['orchestrator', 'planner', 'verifier', 'voice', ...EXECUTOR_AGENTS] as const;
 export const AgentId = z.enum(AGENT_IDS);
 export type AgentId = z.infer<typeof AgentId>;
 
-export const MODEL_ROLES = ['primary', 'planning', 'execution', 'verification'] as const;
+export const MODEL_ROLES = ['primary', 'planning', 'execution', 'verification', 'voice'] as const;
 export const ModelRole = z.enum(MODEL_ROLES);
 export type ModelRole = z.infer<typeof ModelRole>;
 
@@ -142,6 +142,7 @@ export const EVENT_CATEGORIES = [
   'browser',
   'security',
   'persistence',
+  'voice',
 ] as const;
 export const EventCategory = z.enum(EVENT_CATEGORIES);
 export type EventCategory = z.infer<typeof EventCategory>;
@@ -261,3 +262,23 @@ export interface ToolCallRecord {
   endedAt: string | null;
   durationMs: number | null;
 }
+
+/** Events sent to the desktop client (JSON text frames); audio travels as binary frames. */
+export type VoiceServerEvent =
+  | { type: 'ready'; model: string; voice: string | null; language: string | null }
+  | { type: 'state'; state: 'connecting' | 'ready' | 'reconnecting' | 'closed'; detail?: string }
+  | { type: 'transcript'; speaker: 'user' | 'agent'; text: string; final: boolean }
+  | { type: 'tool'; name: string; ok: boolean; missionId?: string; message?: string }
+  | {
+      type: 'command';
+      command: 'pause' | 'resume' | 'cancel' | 'emergency_stop' | 'report';
+      ok: boolean;
+      message: string;
+      missionId?: string;
+    }
+  | { type: 'mission'; missionId: string }
+  | { type: 'mission_update'; missionId: string; event: string; message: string }
+  | { type: 'interrupted'; by: 'user' | 'server' }
+  | { type: 'turn_end' }
+  | { type: 'error'; code: string; message: string }
+  | { type: 'closed'; reason: string };

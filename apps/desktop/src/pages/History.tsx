@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Database, Download, FileDown, Plus, Save, Trash2 } from 'lucide-react';
+import { Brain, Database, Download, FileDown, Plus, Save, Search, Trash2, Wrench } from 'lucide-react';
 import { api, downloadFile, downloadJson } from '../api';
 import { useAction, useResource } from '../hooks';
 import { useApp } from '../store';
@@ -54,7 +54,7 @@ function MissionSearch() {
     downloadFile(`/api/missions/${id}/report`, `hermes-${id}.md`),
   );
   return (
-    <Card title="Missions">
+    <Card title="Missions" icon={<Search className="size-4" />}>
       <form
         className="mb-2 flex gap-2"
         onSubmit={(e) => {
@@ -75,7 +75,7 @@ function MissionSearch() {
       {list.data?.length === 0 && <Empty>Aucun résultat.</Empty>}
       <ul className="max-h-96 space-y-1 overflow-auto">
         {list.data?.map((m) => (
-          <li key={m.id} className="flex items-center gap-2 text-sm">
+          <li key={m.id} className="flex items-center gap-2 rounded-control px-1 text-sm hover:bg-raised">
             <StatusBadge status={m.status} />
             <button
               type="button"
@@ -84,7 +84,7 @@ function MissionSearch() {
             >
               {m.request}
             </button>
-            <span className="shrink-0 text-xs text-slate-500">{fmtDate(m.createdAt)}</span>
+            <span className="shrink-0 text-xs text-muted">{fmtDate(m.createdAt)}</span>
             <Button
               variant="ghost"
               aria-label="Exporter le rapport"
@@ -117,7 +117,7 @@ function Maintenance() {
     (r) => setMsg(`Purge effectuée : ${r.missions} mission(s), ${r.events} événement(s) supprimés.`),
   );
   return (
-    <Card title="Maintenance et diagnostic">
+    <Card title="Maintenance et diagnostic" icon={<Wrench className="size-4" />}>
       <div className="space-y-3">
         <div className="flex flex-wrap gap-2">
           <Button
@@ -198,6 +198,7 @@ function MemoryManager() {
     <Card
       className="mt-4"
       title="Mémoire persistante"
+      icon={<Brain className="size-4" />}
       actions={
         <>
           <Select
@@ -249,7 +250,7 @@ function MemoryManager() {
           Ajouter
         </Button>
       </form>
-      <p className="mb-2 text-xs text-slate-500">
+      <p className="mb-2 text-xs text-muted">
         Aucun mot de passe, clé, cookie ou secret n’est enregistré : les contenus sont masqués avant stockage.
         Les entrées « non validé » proviennent d’un agent.
       </p>
@@ -292,7 +293,7 @@ function MemoryRow({
     },
   );
   return (
-    <li className="rounded-md border border-slate-200 p-2 dark:border-slate-800">
+    <li className="rounded-card bg-raised p-2.5 ring-1 ring-line ring-inset">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <input
           type="checkbox"
@@ -306,7 +307,7 @@ function MemoryRow({
             {t}
           </Badge>
         ))}
-        <span className="text-slate-500">
+        <span className="text-muted">
           origine {m.origin} · {fmtDate(m.updatedAt)} · confiance {m.confidence ?? '—'}
         </span>
         <Button variant="ghost" className="ml-auto" onClick={() => setEditing(!editing)}>

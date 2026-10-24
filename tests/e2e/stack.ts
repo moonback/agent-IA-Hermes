@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scenarioHandler, startMockServer } from '../helpers/mock-openrouter';
+import { startMockLiveServer, toneBase64 } from '../helpers/mock-gemini-live';
 
 const root = join(import.meta.dirname, '..', '..');
 const dataDir = mkdtempSync(join(tmpdir(), 'hermes-e2e-'));
@@ -61,12 +62,44 @@ const mock = await startMockServer(
   }),
 );
 
+// SIMULATED Gemini Live: answers typed text, and turns the first ~5 audio chunks of the (fake)
+// microphone into a dictated mission request handled through the real voice agent tools.
+const audioTurn = (text: string) => [
+  {
+    serverContent: {
+      modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: toneBase64(200) } }] },
+    },
+  },
+  { serverContent: { outputTranscription: { text } } },
+  { serverContent: { turnComplete: true } },
+];
+const live = await startMockLiveServer({
+  onMessage: (msg, reply, state) => {
+    const typed = (msg.clientContent as { turns?: { parts: { text: string }[] }[] } | undefined)?.turns?.[0]
+      ?.parts[0]?.text;
+    if (typed && !typed.startsWith('[Notification HERMES]') && /bonjour/i.test(typed))
+      for (const m of audioTurn('Bonjour, je vous écoute.')) reply(m);
+    if ((msg.realtimeInput as { audio?: unknown } | undefined)?.audio && state.audioChunks === 5) {
+      reply({ serverContent: { inputTranscription: { text: 'Écris un rapport vocal' } } });
+      reply({
+        toolCall: {
+          functionCalls: [
+            { id: 'fc-e2e', name: 'mission_create', args: { request: 'Écrire un rapport vocal' } },
+          ],
+        },
+      });
+      for (const m of audioTurn('Je prépare le plan du rapport.')) reply(m);
+    }
+  },
+});
+
 const env = {
   ...process.env,
   HERMES_TOKEN: token,
   HERMES_DATA_DIR: dataDir,
   HERMES_TEST_MODE: '1',
   HERMES_ALLOWED_ORIGINS: `http://127.0.0.1:${UI_PORT}`,
+  HERMES_GEMINI_LIVE_URL: live.url,
 };
 const tsx = join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const server = spawn(process.execPath, [tsx, join(root, 'apps/server/src/main.ts')], {
@@ -108,6 +141,7 @@ const stop = () => {
   vite.kill();
   server.kill();
   mock.server.close();
+  void live.close();
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

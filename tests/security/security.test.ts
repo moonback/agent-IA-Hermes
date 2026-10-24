@@ -1,9 +1,10 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { API_KEY_NAME, type AgentId } from '@hermes/core';
+import { API_KEY_NAME, GEMINI_KEY_NAME, type AgentId } from '@hermes/core';
+import { randomBytes } from 'node:crypto';
 import { createHttpServer } from '../../apps/server/src/http';
 import { buildRoutes } from '../../apps/server/src/routes';
 import {
@@ -295,6 +296,76 @@ describe('service HTTP local', () => {
     for (const p of ['/api/provider', '/api/status', '/api/diagnostics', '/api/events?limit=500']) {
       expect(await (await call(p)).text()).not.toContain('zzzzzzzzzzzzzzzz');
     }
+  });
+  it('ne renvoie jamais la clé Gemini et refuse un point d’accès Gemini étranger', async () => {
+    const gkey = `AIzaSy${'G'.repeat(33)}`;
+    expect(
+      (await call('/api/provider/gemini/key', { method: 'PUT', body: JSON.stringify({ apiKey: gkey }) }))
+        .status,
+    ).toBe(200);
+    expect(await rtc.rt.secrets.get(GEMINI_KEY_NAME)).toBe(gkey);
+    for (const p of ['/api/provider/gemini', '/api/status', '/api/diagnostics', '/api/events?limit=500']) {
+      const text = await (await call(p)).text();
+      expect(text).not.toContain('GGGGGGGGGGGGGGGG');
+    }
+    expect(JSON.parse(await (await call('/api/provider/gemini')).text())).toMatchObject({ hasKey: true });
+    for (const bad of [
+      { baseUrl: 'https://evil.example/v1beta' },
+      { baseUrl: 'http://generativelanguage.googleapis.com/v1beta' },
+      { backend: 'vertex', vertexProject: '../../x', vertexLocation: 'us-central1' },
+      { backend: 'vertex', vertexProject: 'mon-projet', vertexLocation: 'evil.com/a' },
+    ])
+      expect(
+        (await call('/api/provider/gemini/settings', { method: 'PUT', body: JSON.stringify(bad) })).status,
+      ).toBe(400);
+    expect(
+      (
+        await call('/api/provider/role-providers', {
+          method: 'PUT',
+          body: JSON.stringify({ voice: 'openrouter' }),
+        })
+      ).status,
+    ).toBe(400);
+  });
+  it('WebSocket vocal : ticket authentifié, à usage unique, hôte et origine contrôlés', async () => {
+    // No Gemini key: an accepted socket fails locally (config_missing) instead of calling Google.
+    await rtc.rt.secrets.delete(GEMINI_KEY_NAME);
+    const port = (server.address() as AddressInfo).port;
+    const upgrade = (path: string, headers: Record<string, string> = {}) =>
+      new Promise<number>((resolve, reject) => {
+        const req = httpRequest({
+          host: '127.0.0.1',
+          port,
+          path,
+          headers: {
+            Connection: 'Upgrade',
+            Upgrade: 'websocket',
+            'Sec-WebSocket-Version': '13',
+            'Sec-WebSocket-Key': randomBytes(16).toString('base64'),
+            ...headers,
+          },
+        });
+        req.on('upgrade', (res, socket) => (socket.destroy(), resolve(res.statusCode ?? 0)));
+        req.on('response', (res) => (res.resume(), resolve(res.statusCode ?? 0)));
+        req.on('error', reject);
+        req.end();
+      });
+    // Tickets are only issued to authenticated callers.
+    expect((await call('/api/voice/ticket', { method: 'POST', auth: null })).status).toBe(401);
+    const ticket = async () =>
+      ((await (await call('/api/voice/ticket', { method: 'POST', body: '{}' })).json()) as { ticket: string })
+        .ticket;
+    expect(await upgrade('/api/voice/stream')).toBe(401);
+    expect(await upgrade(`/api/voice/stream?ticket=${'0'.repeat(64)}`)).toBe(401);
+    expect(await upgrade('/api/inconnu')).toBe(404);
+    expect(
+      await upgrade(`/api/voice/stream?ticket=${await ticket()}`, { Origin: 'https://evil.example' }),
+    ).toBe(403);
+    expect(await upgrade(`/api/voice/stream?ticket=${await ticket()}`, { Host: 'evil.example' })).toBe(403);
+    const t1 = await ticket();
+    expect(await upgrade(`/api/voice/stream?ticket=${t1}`, { Origin: 'http://127.0.0.1:1420' })).toBe(101);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await upgrade(`/api/voice/stream?ticket=${t1}`)).toBe(401); // single use
   });
   it('valide les entrées', async () => {
     expect(

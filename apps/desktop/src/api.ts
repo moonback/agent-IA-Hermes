@@ -65,6 +65,21 @@ export async function api<T>(
   return (await res.json()) as T;
 }
 
+/**
+ * Opens the voice WebSocket. Browsers cannot put the session token on a WebSocket, so a
+ * single-use ticket is first obtained over authenticated HTTP and presented in the URL.
+ */
+export async function openVoiceSocket(): Promise<WebSocket> {
+  const { ticket } = await api<{ ticket: string }>('/api/voice/ticket', { body: {} });
+  const b = await getBackend();
+  const base = b.url
+    ? b.url.replace(/^http/, 'ws')
+    : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+  const ws = new WebSocket(`${base}/api/voice/stream?ticket=${encodeURIComponent(ticket)}`);
+  ws.binaryType = 'arraybuffer';
+  return ws;
+}
+
 /** Downloads an authenticated resource (images, reports) as an object URL. */
 export async function apiBlobUrl(path: string): Promise<string> {
   const { url, headers: h } = await headers(false);

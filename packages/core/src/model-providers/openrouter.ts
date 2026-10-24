@@ -477,7 +477,7 @@ export class OpenRouterProvider implements ModelProvider {
     try {
       key = await this.getKeyInfo();
     } catch (err) {
-      return fail(statusOf(err), err instanceof Error ? err.message : String(err));
+      return fail(connectionStatusOf(err), err instanceof Error ? err.message : String(err));
     }
     if (!model) return fail('model_unavailable', 'Clé valide, mais aucun modèle principal sélectionné.', key);
     try {
@@ -491,7 +491,7 @@ export class OpenRouterProvider implements ModelProvider {
         {},
       );
     } catch (err) {
-      return fail(statusOf(err), err instanceof Error ? err.message : String(err), key);
+      return fail(connectionStatusOf(err), err instanceof Error ? err.message : String(err), key);
     }
     return {
       status: 'ok',
@@ -505,7 +505,7 @@ export class OpenRouterProvider implements ModelProvider {
   }
 }
 
-function statusOf(err: unknown): ConnectionTestResult['status'] {
+export function connectionStatusOf(err: unknown): ConnectionTestResult['status'] {
   if (!(err instanceof ProviderError)) return 'provider_error';
   switch (err.kind) {
     case 'config_missing':

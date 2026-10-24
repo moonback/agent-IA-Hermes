@@ -29,6 +29,9 @@ const rt = await createRuntime({
   dataDir,
   secrets: testMode ? new MemorySecretStore() : undefined,
   allowLoopbackProviderForTests: testMode,
+  // Local simulated Gemini endpoints, honoured only in test mode (loopback is refused otherwise).
+  geminiLiveUrl: testMode ? process.env.HERMES_GEMINI_LIVE_URL : undefined,
+  geminiBaseUrl: testMode ? process.env.HERMES_GEMINI_BASE_URL : undefined,
   logToConsole: process.env.HERMES_LOG_CONSOLE === '1',
 });
 if (testMode) {

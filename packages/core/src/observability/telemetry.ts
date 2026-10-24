@@ -54,6 +54,8 @@ export class Logger {
 
 export interface LiveEvent {
   type: string;
+  /** Grouping for live-only streams that have no mission (e.g. 'voice' transcripts). */
+  category?: string;
   missionId?: string | null;
   taskId?: string | null;
   agent?: string | null;
