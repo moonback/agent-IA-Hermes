@@ -150,6 +150,10 @@ const STATUS_ICON: Record<string, LucideIcon> = {
   cancelled: Ban,
   expired: Ban,
   abandoned: Ban,
+  scheduled: Clock,
+  awaiting_start: ShieldAlert,
+  skipped: Ban,
+  error: CircleX,
 };
 
 export function StatusBadge({ status }: { status: string }) {

@@ -66,8 +66,9 @@ export class ToolLoopAgent implements Agent {
     private readonly llm: LlmGateway,
     private readonly executor: ToolExecutor,
     private readonly tools: ReadonlyMap<string, AnyTool>,
+    descriptor: AgentDescriptor = AGENTS[id],
   ) {
-    this.descriptor = AGENTS[id];
+    this.descriptor = descriptor;
   }
 
   async execute(ctx: AgentRunContext): Promise<TaskResult & { model: string | null }> {

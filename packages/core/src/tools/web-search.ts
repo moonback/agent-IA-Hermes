@@ -11,6 +11,8 @@ export interface SearchSource {
 export interface SearchResult {
   provider: string;
   answer: string;
+  /** true when `answer` was written by a model (Tavily, OpenRouter) rather than listing raw results. */
+  answerIsModelSynthesis: boolean;
   sources: SearchSource[];
 }
 
@@ -73,6 +75,7 @@ export class OpenRouterWebSearchProvider implements SearchProvider {
     return {
       provider: this.id,
       answer: res.content,
+      answerIsModelSynthesis: true,
       sources: res.citations.map((c) => ({
         url: c.url,
         title: c.title,
@@ -85,7 +88,7 @@ export class OpenRouterWebSearchProvider implements SearchProvider {
 export const webSearch = defineTool({
   id: 'web.search',
   description:
-    'Recherche Web en direct via le fournisseur configuré. Retourne une synthèse ET la liste des sources (URL, titre). Seules les sources retournées comptent comme preuves.',
+    'Recherche Web en direct via le fournisseur configuré (Tavily, Brave Search ou OpenRouter, avec bascule automatique). Retourne la liste des sources (URL, titre, extrait) et, selon le fournisseur, une synthèse. Seules les sources retournées comptent comme preuves.',
   input: z.object({
     query: z.string().min(2).max(500),
     maxResults: z.number().int().min(1).max(10).default(5),
@@ -94,7 +97,7 @@ export const webSearch = defineTool({
     provider: z.string(),
     query: z.string(),
     answer: z.string(),
-    answerIsModelSynthesis: z.literal(true),
+    answerIsModelSynthesis: z.boolean(),
     sources: z.array(
       z.object({ url: z.string(), title: z.string().nullable(), snippet: z.string().nullable() }),
     ),
@@ -118,7 +121,7 @@ export const webSearch = defineTool({
       provider: r.provider,
       query: i.query,
       answer: r.answer,
-      answerIsModelSynthesis: true as const,
+      answerIsModelSynthesis: r.answerIsModelSynthesis,
       sources: r.sources,
       retrievedAt: new Date().toISOString(),
       warning:

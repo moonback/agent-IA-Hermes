@@ -6,6 +6,7 @@ import { useApp } from '../../store';
 import type { Status } from '../../types';
 import { ErrorBox } from '../ui';
 import { ActivityPanel } from './ActivityPanel';
+import { Notifications } from './Notifications';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
@@ -82,6 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {wide && activityPanel && <ActivityPanel status={status.data} />}
         </div>
       </div>
+      <Notifications />
     </div>
   );
 }

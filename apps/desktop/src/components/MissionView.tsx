@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Download, Pause, Play, RotateCcw, Square } from 'lucide-react';
+import { Download, Pause, Play, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { api, downloadFile } from '../api';
 import { useAction, useResource } from '../hooks';
 import { useApp } from '../store';
@@ -38,6 +38,11 @@ export function MissionView({ missionId }: { missionId: string }) {
   const exportReport = useAction(() =>
     downloadFile(`/api/missions/${missionId}/report`, `hermes-${missionId}.md`),
   );
+  const { navigate } = useApp();
+  const deleteMission = useAction(
+    () => api(`/api/missions/${missionId}`, { method: 'DELETE' }),
+    () => navigate('missions', null),
+  );
 
   const callsByTask = useMemo(() => {
     const m = new Map<string, MissionDetail['toolCalls']>();
@@ -55,6 +60,10 @@ export function MissionView({ missionId }: { missionId: string }) {
   const canStart = ['planned', 'paused', 'interrupted'].includes(m.status) && !active;
   const terminal = ['completed', 'failed', 'cancelled'].includes(m.status);
   const doneTasks = tasks.filter((t) => t.status === 'completed').length;
+  const activeAgents = [...new Set(tasks.map((task) => task.agent))];
+  const blockedTasks = tasks.filter(
+    (task) => task.status === 'blocked' || task.status === 'waiting_approval',
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -106,13 +115,35 @@ export function MissionView({ missionId }: { missionId: string }) {
             >
               Rapport
             </Button>
+            {terminal && (
+              <Button
+                variant="ghost"
+                icon={<Trash2 className="size-4" />}
+                pending={deleteMission.pending}
+                onClick={() => {
+                  if (window.confirm('Supprimer définitivement cette mission et toutes ses données ?'))
+                    void deleteMission.run();
+                }}
+              >
+                Supprimer
+              </Button>
+            )}
           </>
         }
       >
         <p className="text-base font-medium whitespace-pre-wrap">{m.request}</p>
         {tasks.length > 0 && (
           <div className="mt-3">
-            <ProgressBar value={doneTasks} max={tasks.length} label="Étapes terminées" />
+            <ProgressBar
+              value={doneTasks}
+              max={tasks.length}
+              label="Étapes terminées (progression, pas validation finale)"
+            />
+            <p className="mt-1 text-xs text-muted" aria-live="polite">
+              {doneTasks}/{tasks.length} terminée(s) ·{' '}
+              {tasks.filter((task) => task.status === 'running').length} en cours
+              {blockedTasks > 0 ? ` · ${blockedTasks} bloquée(s) ou en attente d’approbation` : ''}
+            </p>
           </div>
         )}
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 rounded-card bg-raised p-3 text-xs text-muted ring-1 ring-line ring-inset sm:grid-cols-4">
@@ -138,8 +169,22 @@ export function MissionView({ missionId }: { missionId: string }) {
             </dd>
           </div>
         </dl>
+        {activeAgents.length > 0 && (
+          <div className="mt-3">
+            <p className="mb-1 text-xs font-medium text-muted">Agents associés aux étapes</p>
+            <div className="flex flex-wrap gap-1">
+              {activeAgents.map((agent) => (
+                <Badge key={agent} tone="info">
+                  {agent}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="mt-3 space-y-2">
-          <ErrorBox error={start.error ?? pause.error ?? cancel.error ?? exportReport.error} />
+          <ErrorBox
+            error={start.error ?? pause.error ?? cancel.error ?? exportReport.error ?? deleteMission.error}
+          />
           {m.error && !terminal && <ErrorBox error={m.error} title="Attention" />}
         </div>
       </Card>
@@ -242,6 +287,27 @@ export function MissionView({ missionId }: { missionId: string }) {
               ))}
             </ul>
           )}
+        </Card>
+      )}
+
+      {detail.data.artifacts.length > 0 && (
+        <Card title={`Livrables enregistrés (${detail.data.artifacts.length})`}>
+          <ul className="divide-y divide-line">
+            {detail.data.artifacts.map((artifact) => (
+              <li key={artifact.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+                <a
+                  className="min-w-0 flex-1 truncate text-accent-fg underline-offset-2 hover:underline"
+                  href={`/api/artifacts/${encodeURIComponent(artifact.id)}/file`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {artifact.description || artifact.path.split(/[\\/]/).at(-1) || artifact.path}
+                </a>
+                <Badge>{artifact.kind}</Badge>
+                <span className="text-xs text-faint">{fmtDate(artifact.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 

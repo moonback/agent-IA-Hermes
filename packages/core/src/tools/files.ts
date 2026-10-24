@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { HermesError } from '../shared/errors';
 import { assertInsideRoots } from '../policy-engine/paths';
 import { alwaysAvailable, defineTool, type ToolContext } from './types';
+import { DOCUMENT_EXTENSIONS, DOCUMENT_LIMITS, extractDocument } from './documents';
 
 const TEXT_EXTENSIONS = new Set([
   '.txt',
@@ -180,7 +181,7 @@ export const filesSearch = defineTool({
 export const filesRead = defineTool({
   id: 'files.read',
   description:
-    'Lit un fichier texte autorisé (taille limitée). Pour un format binaire, retourne seulement ses métadonnées.',
+    'Lit un fichier autorisé : texte brut, ou texte extrait des documents PDF (100 pages max), DOCX (Markdown) et XLSX (feuilles en lignes tabulées). Pour un autre format binaire, retourne seulement ses métadonnées.',
   input: z.object({ path: absPath, maxBytes: z.number().int().min(1).max(1_000_000).default(200_000) }),
   output: z.object({
     path: z.string(),
@@ -191,14 +192,25 @@ export const filesRead = defineTool({
     truncated: z.boolean(),
     sha256: z.string().nullable(),
     reason: z.string().optional(),
+    document: z
+      .object({
+        format: z.enum(['pdf', 'docx', 'xlsx']),
+        pages: z.number().nullable(),
+        pagesRead: z.number().nullable(),
+        metadata: z.record(z.string(), z.string().nullable()),
+        sheets: z.array(z.object({ name: z.string(), rows: z.number(), truncated: z.boolean() })).nullable(),
+        warnings: z.array(z.string()),
+      })
+      .optional(),
   }),
-  allowedAgents: ['files', 'code', 'research', 'computer', 'browser'],
+  allowedAgents: ['files', 'code', 'research', 'computer', 'browser', 'shell'],
   permissions: ['fs.read'],
   risk: 'low',
-  timeoutMs: 15_000,
+  timeoutMs: 60_000,
   reversible: true,
   idempotent: true,
-  verification: 'Lecture seule ; empreinte SHA-256 du contenu lu retournée comme preuve.',
+  verification:
+    'Lecture seule ; empreinte SHA-256 du fichier lu retournée comme preuve (documents : empreinte du fichier, texte extrait borné).',
   confirmation: 'Aucune (lecture seule dans les dossiers autorisés).',
   availability: alwaysAvailable,
   resources: (i) => ({ paths: [{ path: i.path, access: 'read' }] }),
@@ -209,6 +221,49 @@ export const filesRead = defineTool({
     if (!s.isFile()) throw new HermesError('VALIDATION', `Ce n'est pas un fichier : ${p}`);
     const ext = extname(p).toLowerCase() || basename(p).toLowerCase();
     const base = { path: p, size: s.size, modifiedAt: s.mtime.toISOString() };
+    const format = DOCUMENT_EXTENSIONS[ext];
+    if (format) {
+      if (s.size > DOCUMENT_LIMITS.maxFileBytes)
+        return {
+          ...base,
+          readable: false,
+          content: null,
+          truncated: false,
+          sha256: null,
+          reason: `Document trop volumineux pour l’extraction (> ${DOCUMENT_LIMITS.maxFileBytes / 1024 / 1024} Mo)`,
+        };
+      const buf = await readFile(p);
+      let doc: Awaited<ReturnType<typeof extractDocument>>;
+      try {
+        doc = await extractDocument(buf, format);
+      } catch (err) {
+        // Corrupt, encrypted or unsupported document: reported, not a tool failure.
+        return {
+          ...base,
+          readable: false,
+          content: null,
+          truncated: false,
+          sha256: createHash('sha256').update(buf).digest('hex'),
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+      return {
+        ...base,
+        readable: true,
+        content: doc.text,
+        truncated: doc.truncated,
+        sha256: createHash('sha256').update(buf).digest('hex'),
+        document: {
+          format: doc.format,
+          pages: doc.pages,
+          pagesRead: doc.pagesRead,
+          metadata: doc.metadata,
+          sheets:
+            doc.sheets?.map((x) => ({ name: x.name, rows: x.rows.length, truncated: x.truncated })) ?? null,
+          warnings: doc.warnings,
+        },
+      };
+    }
     if (!TEXT_EXTENSIONS.has(ext)) {
       return {
         ...base,

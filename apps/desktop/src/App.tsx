@@ -13,12 +13,14 @@ import { ToolsPage } from './pages/Tools';
 import { HistoryPage } from './pages/History';
 import { SettingsPage } from './pages/Settings';
 import { VoicePage } from './pages/Voice';
+import { SchedulePage } from './pages/Schedule';
 
 const PAGES: Record<Page, () => React.JSX.Element> = {
   dashboard: DashboardPage,
   chat: ChatPage,
   voice: VoicePage,
   missions: MissionsPage,
+  schedule: SchedulePage,
   computer: ComputerPage,
   agents: AgentsPage,
   models: ModelsPage,

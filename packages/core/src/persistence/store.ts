@@ -28,6 +28,15 @@ import { HermesError } from '../shared/errors';
 import { redact, truncateDeep } from '../shared/redact';
 import { newId, nowIso, sha256, stableStringify } from '../shared/util';
 import { MIGRATIONS } from './migrations';
+import type {
+  ScheduledTrigger,
+  TriggerBudget,
+  TriggerInput,
+  TriggerKind,
+  TriggerRun,
+  TriggerRunStatus,
+  TriggerSpec,
+} from '../scheduler/triggers';
 
 type Row = Record<string, SQLInputValue>;
 
@@ -342,6 +351,12 @@ export class HermesStore {
     this.db
       .prepare('UPDATE missions SET usage_json = ?, updated_at = ? WHERE id = ?')
       .run(json(usage), nowIso(), id);
+  }
+
+  deleteMission(id: string): boolean {
+    this.requireMission(id); // throws NOT_FOUND if missing
+    // ON DELETE CASCADE handles tasks, tool_calls, approvals, agent_runs, artifacts, mission_events
+    return Number(this.db.prepare('DELETE FROM missions WHERE id = ?').run(id).changes) > 0;
   }
 
   // ---------------------------------------------------------------- tasks
@@ -928,23 +943,42 @@ export class HermesStore {
     return n;
   }
 
+  /**
+   * Keyword search ranked by BM25 (SQLite FTS5, accents folded, prefix match on each word).
+   * Lower bm25 = better. Returns nothing for a query without usable words.
+   */
+  searchMemoryKeyword(
+    text: string,
+    q: { kind?: MemoryKind; limit?: number } = {},
+  ): { entry: MemoryEntry; bm25: number }[] {
+    const match = ftsQuery(text);
+    if (!match) return [];
+    const params: SQLInputValue[] = [match];
+    let kindSql = '';
+    if (q.kind) {
+      kindSql = 'AND m.kind = ?';
+      params.push(q.kind);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT m.*, bm25(memory_fts) AS rank FROM memory_fts JOIN memory_entries m ON m.rowid = memory_fts.rowid
+         WHERE memory_fts MATCH ? ${kindSql} ORDER BY rank LIMIT ${Math.min(q.limit ?? 50, 500)}`,
+      )
+      .all(...params) as Row[];
+    return rows.map((r) => ({ entry: rowToMemory(r), bm25: Number(r.rank) }));
+  }
+
+  /** Memory search used by the orchestrator: BM25 relevance when a text is given, else most recent. */
   searchMemory(q: { text?: string; kind?: MemoryKind; limit?: number } = {}): MemoryEntry[] {
+    if (q.text) {
+      const hits = this.searchMemoryKeyword(q.text, q);
+      if (hits.length || ftsQuery(q.text)) return hits.map((h) => h.entry);
+    }
     const where: string[] = [];
     const params: SQLInputValue[] = [];
     if (q.kind) {
       where.push('kind = ?');
       params.push(q.kind);
-    }
-    if (q.text) {
-      const words = q.text
-        .toLowerCase()
-        .split(/\W+/u)
-        .filter((w) => w.length > 3)
-        .slice(0, 8);
-      if (words.length) {
-        where.push(`(${words.map(() => 'LOWER(content) LIKE ?').join(' OR ')})`);
-        params.push(...words.map((w) => `%${w}%`));
-      }
     }
     return (
       this.db
@@ -953,6 +987,48 @@ export class HermesStore {
         )
         .all(...params) as Row[]
     ).map(rowToMemory);
+  }
+
+  /** Stored vectors computed by `model` (other models' vectors are not comparable). */
+  memoryVectors(model: string, kind?: MemoryKind): { id: string; vector: Float32Array }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, embedding FROM memory_entries WHERE embedding IS NOT NULL AND embedding_model = ? ${kind ? 'AND kind = ?' : ''}`,
+      )
+      .all(...(kind ? [model, kind] : [model])) as Row[];
+    return rows.map((r) => {
+      const b = r.embedding as Uint8Array;
+      return {
+        id: String(r.id),
+        vector: new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)),
+      };
+    });
+  }
+
+  /** Entries without a vector for `model` (new, edited, or embedded by another model). */
+  pendingMemoryEmbeddings(model: string, limit = 64): { id: string; content: string }[] {
+    return (
+      this.db
+        .prepare(
+          'SELECT id, content FROM memory_entries WHERE embedding IS NULL OR embedding_model IS NOT ? ORDER BY updated_at DESC LIMIT ?',
+        )
+        .all(model, limit) as Row[]
+    ).map((r) => ({ id: String(r.id), content: String(r.content) }));
+  }
+
+  setMemoryEmbedding(id: string, vector: Float32Array, model: string): void {
+    this.db
+      .prepare('UPDATE memory_entries SET embedding = ?, embedding_model = ? WHERE id = ?')
+      .run(new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength), model, id);
+  }
+
+  memoryIndexCounts(model: string): { total: number; embedded: number } {
+    const r = this.db
+      .prepare(
+        'SELECT COUNT(*) AS total, SUM(CASE WHEN embedding IS NOT NULL AND embedding_model = ? THEN 1 ELSE 0 END) AS embedded FROM memory_entries',
+      )
+      .get(model) as Row;
+    return { total: Number(r.total), embedded: Number(r.embedded ?? 0) };
   }
 
   // ---------------------------------------------------------------- settings (non-secret)
@@ -986,6 +1062,224 @@ export class HermesStore {
       )
       .run(role, modelId, json(fallbacks), nowIso());
   }
+
+  // ------------------------------------------------------------------ scheduled triggers
+
+  createTrigger(t: TriggerInput & { nextRunAt: string | null }): ScheduledTrigger {
+    const id = newId('trg');
+    const now = nowIso();
+    this.db
+      .prepare(
+        `INSERT INTO scheduled_triggers (id, name, kind, spec_json, mission_template, budget_json, enabled, auto_start, next_run_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        t.name,
+        t.spec.kind,
+        json(t.spec),
+        t.missionTemplate,
+        json(t.budget),
+        t.enabled ? 1 : 0,
+        t.autoStart ? 1 : 0,
+        t.nextRunAt,
+        now,
+        now,
+      );
+    return this.requireTrigger(id);
+  }
+
+  getTrigger(id: string): ScheduledTrigger | null {
+    const r = this.db.prepare('SELECT * FROM scheduled_triggers WHERE id = ?').get(id) as Row | undefined;
+    return r ? rowToTrigger(r) : null;
+  }
+
+  requireTrigger(id: string): ScheduledTrigger {
+    const t = this.getTrigger(id);
+    if (!t) throw new HermesError('NOT_FOUND', `Déclencheur introuvable : ${id}`);
+    return t;
+  }
+
+  listTriggers(): ScheduledTrigger[] {
+    return (this.db.prepare('SELECT * FROM scheduled_triggers ORDER BY created_at').all() as Row[]).map(
+      rowToTrigger,
+    );
+  }
+
+  updateTrigger(
+    id: string,
+    p: Partial<TriggerInput> & {
+      nextRunAt?: string | null;
+      lastRunAt?: string;
+      lastMissionId?: string | null;
+      lastError?: string | null;
+      incrementRuns?: boolean;
+    },
+  ): ScheduledTrigger {
+    const cur = this.requireTrigger(id);
+    const spec = p.spec ?? cur.spec;
+    this.db
+      .prepare(
+        `UPDATE scheduled_triggers SET name = ?, kind = ?, spec_json = ?, mission_template = ?, budget_json = ?, enabled = ?, auto_start = ?,
+         next_run_at = ?, last_run_at = ?, last_mission_id = ?, last_error = ?, run_count = run_count + ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(
+        p.name ?? cur.name,
+        spec.kind,
+        json(spec),
+        p.missionTemplate ?? cur.missionTemplate,
+        json(p.budget ?? cur.budget),
+        (p.enabled ?? cur.enabled) ? 1 : 0,
+        (p.autoStart ?? cur.autoStart) ? 1 : 0,
+        p.nextRunAt === undefined ? cur.nextRunAt : p.nextRunAt,
+        p.lastRunAt ?? cur.lastRunAt,
+        p.lastMissionId === undefined ? cur.lastMissionId : p.lastMissionId,
+        p.lastError === undefined ? cur.lastError : p.lastError === null ? null : redact(p.lastError),
+        p.incrementRuns ? 1 : 0,
+        nowIso(),
+        id,
+      );
+    return this.requireTrigger(id);
+  }
+
+  deleteTrigger(id: string): boolean {
+    return Number(this.db.prepare('DELETE FROM scheduled_triggers WHERE id = ?').run(id).changes) > 0;
+  }
+
+  addTriggerRun(r: {
+    triggerId: string;
+    reason: string;
+    status: TriggerRunStatus;
+    firedAt?: string;
+    missionId?: string | null;
+    error?: string | null;
+    sourceMissionId?: string | null;
+    attempt?: number;
+    request?: string | null;
+  }): TriggerRun {
+    const id = newId('run');
+    this.db
+      .prepare(
+        `INSERT INTO trigger_runs (id, trigger_id, mission_id, fired_at, reason, status, error, source_mission_id, attempt, request)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        r.triggerId,
+        r.missionId ?? null,
+        r.firedAt ?? nowIso(),
+        redact(r.reason).slice(0, 2000),
+        r.status,
+        r.error ? redact(r.error).slice(0, 2000) : null,
+        r.sourceMissionId ?? null,
+        r.attempt ?? 0,
+        r.request ? redact(r.request) : null,
+      );
+    return this.getTriggerRun(id)!;
+  }
+
+  getTriggerRun(id: string): TriggerRun | null {
+    const r = this.db.prepare('SELECT * FROM trigger_runs WHERE id = ?').get(id) as Row | undefined;
+    return r ? rowToTriggerRun(r) : null;
+  }
+
+  updateTriggerRun(
+    id: string,
+    p: {
+      status?: TriggerRunStatus;
+      missionId?: string | null;
+      error?: string | null;
+      firedAt?: string;
+      request?: string;
+    },
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE trigger_runs SET status = COALESCE(?, status), mission_id = COALESCE(?, mission_id),
+         error = COALESCE(?, error), fired_at = COALESCE(?, fired_at), request = COALESCE(?, request) WHERE id = ?`,
+      )
+      .run(
+        p.status ?? null,
+        p.missionId ?? null,
+        p.error ? redact(p.error).slice(0, 2000) : null,
+        p.firedAt ?? null,
+        p.request ? redact(p.request) : null,
+        id,
+      );
+  }
+
+  listTriggerRuns(q: { triggerId?: string; status?: TriggerRunStatus[]; limit?: number } = {}): TriggerRun[] {
+    const where: string[] = [];
+    const params: SQLInputValue[] = [];
+    if (q.triggerId) {
+      where.push('trigger_id = ?');
+      params.push(q.triggerId);
+    }
+    if (q.status?.length) {
+      where.push(`status IN (${q.status.map(() => '?').join(',')})`);
+      params.push(...q.status);
+    }
+    const sql = `SELECT * FROM trigger_runs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY fired_at DESC LIMIT ${Math.min(q.limit ?? 100, 1000)}`;
+    return (this.db.prepare(sql).all(...params) as Row[]).map(rowToTriggerRun);
+  }
+
+  triggerRunForMission(missionId: string): TriggerRun | null {
+    const r = this.db.prepare('SELECT * FROM trigger_runs WHERE mission_id = ? LIMIT 1').get(missionId) as
+      Row | undefined;
+    return r ? rowToTriggerRun(r) : null;
+  }
+
+  /** Runs that created a mission since `sinceIso` (for the daily cap). */
+  countLaunchedRunsSince(sinceIso: string): number {
+    const r = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM trigger_runs WHERE mission_id IS NOT NULL AND fired_at >= ?`)
+      .get(sinceIso) as Row;
+    return num(r.n);
+  }
+
+  /** Missions that reached `status` after `sinceIso`, oldest first. */
+  missionsEndedSince(sinceIso: string, status: MissionStatus, limit = 50): Mission[] {
+    return (
+      this.db
+        .prepare(`SELECT * FROM missions WHERE status = ? AND ended_at > ? ORDER BY ended_at LIMIT ?`)
+        .all(status, sinceIso, limit) as Row[]
+    ).map(rowToMission);
+  }
+}
+
+function rowToTrigger(r: Row): ScheduledTrigger {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    kind: String(r.kind) as TriggerKind,
+    spec: parse<TriggerSpec>(r.spec_json, { kind: 'interval', minutes: 60 }),
+    missionTemplate: String(r.mission_template),
+    budget: parse<TriggerBudget>(r.budget_json, {}) ?? {},
+    enabled: num(r.enabled) === 1,
+    autoStart: num(r.auto_start) === 1,
+    nextRunAt: str(r.next_run_at),
+    lastRunAt: str(r.last_run_at),
+    lastMissionId: str(r.last_mission_id),
+    lastError: str(r.last_error),
+    runCount: num(r.run_count),
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+  };
+}
+
+function rowToTriggerRun(r: Row): TriggerRun {
+  return {
+    id: String(r.id),
+    triggerId: String(r.trigger_id),
+    missionId: str(r.mission_id),
+    firedAt: String(r.fired_at),
+    reason: String(r.reason),
+    status: String(r.status) as TriggerRunStatus,
+    error: str(r.error),
+    sourceMissionId: str(r.source_mission_id),
+    attempt: num(r.attempt),
+    request: str(r.request),
+  };
 }
 
 function rowToEvent(r: Row): MissionEvent {
@@ -1096,4 +1390,23 @@ function rowToMemory(r: Row): MemoryEntry {
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
   };
+}
+
+const FTS_STOPWORDS = new Set(
+  'le la les un une des du de d l et ou en au aux a à dans sur pour par avec sans ce cet cette ces qui que quoi est sont the of and to in for on with is are'.split(
+    ' ',
+  ),
+);
+
+/** Turns free text into a safe FTS5 query: quoted words with prefix match, joined by OR. */
+export function ftsQuery(text: string): string | null {
+  const words = [
+    ...new Set(
+      text
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter((w) => w.length >= 2 && !FTS_STOPWORDS.has(w)),
+    ),
+  ].slice(0, 16);
+  return words.length ? words.map((w) => `"${w}"*`).join(' OR ') : null;
 }

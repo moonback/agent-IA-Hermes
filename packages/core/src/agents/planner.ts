@@ -27,7 +27,7 @@ const PLAN_FORMAT = `Réponds UNIQUEMENT par un objet JSON de la forme :
     {
       "id": "s1",
       "objective": "objectif précis et vérifiable de l'étape",
-      "agent": "files | browser | computer | code | research | memory",
+      "agent": "files | browser | computer | code | research | memory | shell",
       "inputs": { "clé": "valeur utile à l'agent (chemins absolus, URL…)" },
       "dependsOn": [],
       "tools": ["files.search"],

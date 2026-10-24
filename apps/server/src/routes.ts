@@ -3,8 +3,17 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
-  AGENTS,
+  AgentCustomization,
+  AgentId,
   API_KEY_NAME,
+  BRAVE_KEY_NAME,
+  TAVILY_KEY_NAME,
+  TEMPLATE_VARIABLES,
+  TriggerSpec,
+  describeSpec,
+  nextRunFor,
+  type ScheduledTrigger,
+  type TriggerRun,
   DEFAULT_LIVE_MODEL,
   GEMINI_KEY_NAME,
   GEMINI_LIVE_LANGUAGES,
@@ -242,6 +251,19 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
       .parse(body ?? {});
     return orchestrator.cancel(params.id!, reason);
   });
+  r.on('DELETE', '/api/missions/:id', ({ params }) => {
+    store.requireMission(params.id!);
+    if (orchestrator.isActive(params.id!))
+      throw new HermesError('INVALID_TRANSITION', 'Annulez la mission avant de la supprimer');
+    store.deleteMission(params.id!);
+    rt.telemetry.record({
+      category: 'persistence',
+      level: 'warn',
+      type: 'mission.deleted',
+      message: `Mission ${params.id!} supprimée par l'utilisateur`,
+    });
+    return { deleted: true };
+  });
   r.on('GET', '/api/missions/:id/report', ({ params, res }) => {
     const m = store.requireMission(params.id!);
     const tasks = store.listTasks(m.id);
@@ -304,6 +326,14 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
   r.on('GET', '/api/agents', () => {
     const stats = store.agentStats();
     const assignments = rt.settings.assignments();
+    const activeMissions = new Map<string, string[]>();
+    for (const row of store.db
+      .prepare(
+        `SELECT DISTINCT agent, mission_id FROM tasks WHERE status IN ('running','waiting_approval') ORDER BY agent, mission_id`,
+      )
+      .all() as { agent: string; mission_id: string }[]) {
+      activeMissions.set(row.agent, [...(activeMissions.get(row.agent) ?? []), row.mission_id]);
+    }
     const busy = new Map(
       (
         store.db
@@ -317,8 +347,9 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
     const running = store.listMissions({ status: ['running'], limit: 100 }).length;
     busy.set('planner', planning);
     busy.set('orchestrator', running);
-    return Object.values(AGENTS).map((a) => ({
+    return Object.values(rt.agentDescriptors).map((a) => ({
       activeTasks: busy.get(a.id) ?? 0,
+      activeMissionIds: activeMissions.get(a.id) ?? [],
       id: a.id,
       name: a.name,
       role: a.role,
@@ -330,6 +361,44 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
       tools: a.executes ? toolsForAgent(a.id as never, rt.tools.values()).map((t) => t.id) : [],
       stats: stats.find((s) => s.agent === a.id) ?? null,
     }));
+  });
+  r.on('PATCH', '/api/agents/:id', ({ params, body }) => {
+    const id = AgentId.parse(params.id!);
+    const descriptor = rt.agentDescriptors[id];
+    const input = AgentCustomization.parse(body);
+    if (!descriptor.executes && (input.limits || input.modelRole))
+      throw new HermesError(
+        'INVALID_TRANSITION',
+        'Les limites et le rôle de modèle ne s’appliquent qu’aux agents exécutants',
+      );
+    if (descriptor.executes && (input.limits || input.modelRole)) {
+      const active = store.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM tasks WHERE agent = ? AND status IN ('running','waiting_approval')`,
+        )
+        .get(id) as { n: number };
+      if (active.n > 0)
+        throw new HermesError(
+          'INVALID_TRANSITION',
+          'Attendez la fin des tâches actives avant de modifier le modèle ou les limites de cet agent',
+        );
+    }
+    const customizations = store.getSetting<Record<string, unknown>>(
+      'app_settings',
+      'agent_customizations',
+      {},
+    );
+    const previous = AgentCustomization.parse(customizations[id] ?? {});
+    const updated = AgentCustomization.parse({ ...previous, ...input });
+    store.setSetting('app_settings', 'agent_customizations', { ...customizations, [id]: updated });
+    Object.assign(descriptor, updated);
+    rt.telemetry.record({
+      category: 'application',
+      type: 'agent.customized',
+      message: `Configuration de l’agent ${id} modifiée`,
+      data: { agentId: id, fields: Object.keys(input) },
+    });
+    return { updated: true, agent: descriptor };
   });
   r.on('GET', '/api/tools', async () => {
     const policy = rt.settings.policy();
@@ -368,6 +437,101 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
   r.on('PUT', '/api/budget', ({ body }) => rt.settings.setBudget(body));
   r.on('GET', '/api/search-settings', () => rt.settings.search());
   r.on('PUT', '/api/search-settings', ({ body }) => rt.settings.setSearch(body));
+  // Search API keys go to the OS vault like the model keys; the frontend only sees hasKey.
+  const searchKeys = { tavily: TAVILY_KEY_NAME, brave: BRAVE_KEY_NAME } as const;
+  const searchState = async () => ({
+    settings: rt.settings.search(),
+    providers: await rt.searchRegistry.states(),
+    keys: Object.fromEntries(
+      await Promise.all(
+        Object.entries(searchKeys).map(async ([id, name]) => [id, Boolean(await rt.secrets.get(name))]),
+      ),
+    ) as Record<keyof typeof searchKeys, boolean>,
+  });
+  r.on('GET', '/api/search-providers', () => searchState());
+  r.on('PUT', '/api/search-providers/:id/key', async ({ params, body }) => {
+    const id = z.enum(['tavily', 'brave']).parse(params.id);
+    const { apiKey } = z
+      .object({
+        apiKey: z.string().trim().min(10).max(300).regex(/^\S+$/, 'la clé ne doit pas contenir d’espace'),
+      })
+      .parse(body);
+    registerSecret(apiKey);
+    await rt.secrets.set(searchKeys[id], apiKey);
+    rt.executor.invalidateAvailability();
+    rt.telemetry.record({
+      category: 'security',
+      type: 'search.key_saved',
+      message: `Clé ${id === 'tavily' ? 'Tavily' : 'Brave Search'} enregistrée dans le coffre du système`,
+    });
+    return searchState();
+  });
+  r.on('DELETE', '/api/search-providers/:id/key', async ({ params }) => {
+    const id = z.enum(['tavily', 'brave']).parse(params.id);
+    await rt.secrets.delete(searchKeys[id]);
+    rt.executor.invalidateAvailability();
+    rt.telemetry.record({
+      category: 'security',
+      level: 'warn',
+      type: 'search.key_deleted',
+      message: `Clé ${id === 'tavily' ? 'Tavily' : 'Brave Search'} supprimée du coffre`,
+    });
+    return searchState();
+  });
+  r.on('GET', '/api/sandbox', () => rt.sandboxStatus());
+  r.on('PUT', '/api/sandbox', ({ body }) => (rt.settings.setSandbox(body), rt.sandboxStatus()));
+
+  // ------------------------------------------------------------- proactive missions
+  const triggerView = (t: ScheduledTrigger) => ({
+    ...t,
+    description: describeSpec(t.spec),
+    upcoming:
+      t.enabled && t.nextRunAt && (t.spec.kind === 'cron' || t.spec.kind === 'interval')
+        ? upcomingRuns(t.spec, new Date(Date.parse(t.nextRunAt) - 60_000), 10)
+        : [],
+  });
+  const upcomingRuns = (spec: TriggerSpec, after: Date, n: number): string[] => {
+    const out: string[] = [];
+    let cur: Date | null = after;
+    while (out.length < n && (cur = nextRunFor(spec, cur))) out.push(cur.toISOString());
+    return out;
+  };
+  const runView = (run: TriggerRun) => {
+    const m = run.missionId ? store.getMission(run.missionId) : null;
+    return {
+      ...run,
+      mission: m ? { id: m.id, status: m.status, usage: m.usage, endedAt: m.endedAt } : null,
+    };
+  };
+  r.on('GET', '/api/triggers', () => ({
+    triggers: store.listTriggers().map(triggerView),
+    status: rt.scheduler.status(),
+    variables: TEMPLATE_VARIABLES,
+  }));
+  r.on('POST', '/api/triggers', ({ body }) => triggerView(rt.scheduler.create(body)));
+  r.on('PATCH', '/api/triggers/:id', ({ params, body }) =>
+    triggerView(rt.scheduler.update(params.id!, body)),
+  );
+  r.on('DELETE', '/api/triggers/:id', ({ params }) => {
+    if (!rt.scheduler.remove(params.id!)) throw new HermesError('NOT_FOUND', 'Déclencheur introuvable');
+    return { deleted: true };
+  });
+  r.on('POST', '/api/triggers/:id/run', ({ params }) => runView(rt.scheduler.runNow(params.id!)));
+  r.on('GET', '/api/triggers/:id/runs', ({ params, query }) => {
+    store.requireTrigger(params.id!);
+    return store
+      .listTriggerRuns({ triggerId: params.id!, limit: Number(query.get('limit') ?? 50) })
+      .map(runView);
+  });
+  r.on('GET', '/api/trigger-runs', ({ query }) =>
+    store.listTriggerRuns({ limit: Number(query.get('limit') ?? 100) }).map(runView),
+  );
+  r.on('POST', '/api/triggers/preview', ({ body }) => {
+    const { spec } = z.object({ spec: TriggerSpec }).parse(body);
+    return { description: describeSpec(spec), upcoming: upcomingRuns(spec, new Date(), 10) };
+  });
+  r.on('GET', '/api/proactive-settings', () => rt.settings.proactive());
+  r.on('PUT', '/api/proactive-settings', ({ body }) => rt.settings.setProactive(body));
 
   // ------------------------------------------------------------- OpenRouter
   r.on('GET', '/api/provider', async () => ({
@@ -553,13 +717,19 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
   });
 
   // ------------------------------------------------------------- memory
-  r.on('GET', '/api/memory', ({ query }) =>
-    store.searchMemory({
-      text: query.get('search') ?? undefined,
-      kind: query.get('kind') ? MemoryKind.parse(query.get('kind')) : undefined,
-      limit: 200,
-    }),
-  );
+  r.on('GET', '/api/memory', async ({ query }) => {
+    const text = query.get('search')?.trim();
+    const kind = query.get('kind') ? MemoryKind.parse(query.get('kind')) : undefined;
+    // With a query, the same hybrid ranking as memory.search (BM25 + vectors when available).
+    return text
+      ? rt.memoryIndex.search({ text, kind, limit: 100 })
+      : store.searchMemory({ kind, limit: 200 });
+  });
+  r.on('GET', '/api/memory/index', () => ({ ...rt.memoryIndex.status(), settings: rt.settings.memory() }));
+  r.on('PUT', '/api/memory/settings', ({ body }) => {
+    const m = rt.settings.setMemory(body);
+    return { ...rt.memoryIndex.status(), settings: m, restartRequired: true };
+  });
   r.on('POST', '/api/memory', ({ body }) => {
     const b = z
       .object({
@@ -568,7 +738,9 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
         tags: z.array(z.string().max(40)).max(10).default([]),
       })
       .parse(body);
-    return store.addMemory({ ...b, origin: 'user', confidence: 1 });
+    const entry = store.addMemory({ ...b, origin: 'user', confidence: 1 });
+    rt.memoryIndex.schedule();
+    return entry;
   });
   r.on('PATCH', '/api/memory/:id', ({ params, body }) => {
     const b = z
@@ -579,7 +751,9 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
         kind: MemoryKind.optional(),
       })
       .parse(body);
-    return store.updateMemory(params.id!, b);
+    const entry = store.updateMemory(params.id!, b);
+    rt.memoryIndex.schedule();
+    return entry;
   });
   r.on('DELETE', '/api/memory', ({ body }) => {
     const { ids } = z.object({ ids: z.array(z.string()).min(1).max(500) }).parse(body);

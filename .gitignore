@@ -9,3 +9,4 @@ playwright-report/
 .hermes-dev/
 coverage/
 apps/desktop/src-tauri/gen/
+workers/bin/

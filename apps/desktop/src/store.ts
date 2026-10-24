@@ -7,6 +7,7 @@ export type Page =
   | 'chat'
   | 'voice'
   | 'missions'
+  | 'schedule'
   | 'computer'
   | 'agents'
   | 'models'
@@ -20,6 +21,14 @@ interface StreamText {
   done: boolean;
 }
 
+export interface AppNotification {
+  id: number;
+  title: string;
+  body: string;
+  level: 'info' | 'success' | 'warn' | 'error';
+  missionId: string | null;
+}
+
 interface AppState {
   page: Page;
   selectedMissionId: string | null;
@@ -29,9 +38,14 @@ interface AppState {
   streams: Record<string, StreamText>;
   /** Incremented on every persisted event: hooks refetch when it changes. */
   revision: number;
+  /** Notices sent by the server (proactive missions), shown as in-app toasts. */
+  notifications: AppNotification[];
+  dismissNotification: (id: number) => void;
   navigate: (page: Page, missionId?: string | null) => void;
   start: () => () => void;
 }
+
+let notificationSeq = 0;
 
 export const useApp = create<AppState>((set, get) => ({
   page: 'dashboard',
@@ -40,6 +54,8 @@ export const useApp = create<AppState>((set, get) => ({
   events: [],
   streams: {},
   revision: 0,
+  notifications: [],
+  dismissNotification: (id) => set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) })),
   navigate: (page, missionId) =>
     set({ page, selectedMissionId: missionId === undefined ? get().selectedMissionId : missionId }),
   start: () =>
@@ -50,6 +66,18 @@ export const useApp = create<AppState>((set, get) => ({
           set((s) => ({ events: [...s.events.slice(-499), e], revision: s.revision + 1 }));
         } else if (event === 'live') {
           const e = data as LiveEvent;
+          if (e.type === 'notification') {
+            const d = (e.data ?? {}) as Partial<AppNotification>;
+            const n: AppNotification = {
+              id: ++notificationSeq,
+              title: String(d.title ?? 'HERMES'),
+              body: String(d.body ?? ''),
+              level: d.level ?? 'info',
+              missionId: e.missionId ?? null,
+            };
+            set((s) => ({ notifications: [...s.notifications.slice(-3), n] }));
+            return;
+          }
           if (!e.missionId) return;
           const id = e.missionId;
           set((s) => {

@@ -19,7 +19,8 @@
     "test:security": "vitest run tests/security",
     "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "bench": "tsx tests/performance/bench.ts",
-    "tauri": "pnpm --filter @hermes/desktop tauri"
+    "tauri": "pnpm --filter @hermes/desktop tauri",
+    "bench:memory": "tsx tests/performance/memory-recall.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

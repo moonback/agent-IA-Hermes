@@ -1,0 +1,26 @@
+[package]
+name = "hermes-jobrun"
+version = "0.1.0"
+edition = "2021"
+description = "Runs one command inside a Windows Job Object (memory/CPU/process limits, whole tree killed on exit) and reports resource usage."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "hermes-jobrun"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_System_Console",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"

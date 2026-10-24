@@ -176,4 +176,74 @@ CREATE TABLE model_assignments (
 CREATE TABLE app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
 `,
   },
+  {
+    version: 2,
+    name: 'semantic memory (FTS5 + embeddings)',
+    sql: `
+-- Vector of the content (float32, little-endian) and the model that produced it.
+ALTER TABLE memory_entries ADD COLUMN embedding BLOB;
+ALTER TABLE memory_entries ADD COLUMN embedding_model TEXT;
+
+-- BM25 keyword index kept in sync with memory_entries (external-content FTS5 table).
+CREATE VIRTUAL TABLE memory_fts USING fts5(
+  content,
+  content='memory_entries',
+  content_rowid='rowid',
+  tokenize='unicode61 remove_diacritics 2'
+);
+INSERT INTO memory_fts(rowid, content) SELECT rowid, content FROM memory_entries;
+CREATE TRIGGER memory_fts_ai AFTER INSERT ON memory_entries BEGIN
+  INSERT INTO memory_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER memory_fts_ad AFTER DELETE ON memory_entries BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+END;
+-- A changed text invalidates its vector (recomputed in the background).
+CREATE TRIGGER memory_fts_au AFTER UPDATE OF content ON memory_entries BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+  INSERT INTO memory_fts(rowid, content) VALUES (new.rowid, new.content);
+  UPDATE memory_entries SET embedding = NULL, embedding_model = NULL WHERE rowid = new.rowid;
+END;
+`,
+  },
+  {
+    version: 3,
+    name: 'scheduled triggers and artifact annotations',
+    sql: `
+-- Free-form metadata of an artifact (e.g. OCR lines or vision target boxes drawn on a capture).
+ALTER TABLE artifacts ADD COLUMN meta_json TEXT;
+
+CREATE TABLE scheduled_triggers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  spec_json TEXT NOT NULL,
+  mission_template TEXT NOT NULL,
+  budget_json TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  auto_start INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  last_mission_id TEXT,
+  last_error TEXT,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE trigger_runs (
+  id TEXT PRIMARY KEY,
+  trigger_id TEXT NOT NULL REFERENCES scheduled_triggers(id) ON DELETE CASCADE,
+  mission_id TEXT,
+  fired_at TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT,
+  source_mission_id TEXT,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  request TEXT
+);
+CREATE INDEX idx_trigger_runs_trigger ON trigger_runs(trigger_id, fired_at);
+CREATE INDEX idx_trigger_runs_mission ON trigger_runs(mission_id);
+`,
+  },
 ];

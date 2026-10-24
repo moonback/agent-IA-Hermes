@@ -30,7 +30,15 @@ export const RiskLevel = z.enum(['low', 'medium', 'high']);
 export type RiskLevel = z.infer<typeof RiskLevel>;
 
 /** Agents that can own a plan step. Planner, orchestrator and verifier never execute steps. */
-export const EXECUTOR_AGENTS = ['computer', 'files', 'browser', 'code', 'research', 'memory'] as const;
+export const EXECUTOR_AGENTS = [
+  'computer',
+  'files',
+  'browser',
+  'code',
+  'research',
+  'memory',
+  'shell',
+] as const;
 export const ExecutorAgentId = z.enum(EXECUTOR_AGENTS);
 export type ExecutorAgentId = z.infer<typeof ExecutorAgentId>;
 
@@ -143,6 +151,7 @@ export const EVENT_CATEGORIES = [
   'security',
   'persistence',
   'voice',
+  'scheduler',
 ] as const;
 export const EventCategory = z.enum(EVENT_CATEGORIES);
 export type EventCategory = z.infer<typeof EventCategory>;

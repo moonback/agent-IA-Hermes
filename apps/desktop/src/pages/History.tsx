@@ -16,6 +16,7 @@ import {
   PageHeader,
   Select,
   StatusBadge,
+  Switch,
   Textarea,
   fmtDate,
 } from '../components/ui';
@@ -250,6 +251,7 @@ function MemoryManager() {
           Ajouter
         </Button>
       </form>
+      <MemoryIndexStatus />
       <p className="mb-2 text-xs text-muted">
         Aucun mot de passe, clé, cookie ou secret n’est enregistré : les contenus sont masqués avant stockage.
         Les entrées « non validé » proviennent d’un agent.
@@ -268,6 +270,62 @@ function MemoryManager() {
         ))}
       </ul>
     </Card>
+  );
+}
+
+interface MemoryIndexState {
+  mode: 'hybrid' | 'keyword';
+  embedder: { state: string; model: string; reason?: string } | null;
+  total: number;
+  embedded: number;
+  settings: { semantic: boolean; allowModelDownload: boolean };
+}
+
+/** Says honestly which search runs: hybrid (BM25 + local vectors) or keyword-only BM25. */
+function MemoryIndexStatus() {
+  const st = useResource<MemoryIndexState>('/api/memory/index', { intervalMs: 30_000 });
+  const [note, setNote] = useState<string | null>(null);
+  const save = useAction(
+    (settings: MemoryIndexState['settings']) =>
+      api('/api/memory/settings', { method: 'PUT', body: settings }),
+    () => {
+      setNote('Pris en compte au prochain démarrage de HERMES.');
+      st.reload();
+    },
+  );
+  const d = st.data;
+  if (!d) return null;
+  return (
+    <div className="mb-3 space-y-2 rounded-control p-2.5 text-xs ring-1 ring-line ring-inset">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={d.mode === 'hybrid' ? 'success' : 'neutral'}>
+          {d.mode === 'hybrid'
+            ? 'Recherche hybride (mots-clés + sémantique)'
+            : 'Recherche par mots-clés (BM25)'}
+        </Badge>
+        <span className="text-muted">
+          {d.embedded} / {d.total} souvenir(s) vectorisé(s)
+          {d.embedder ? ` · ${d.embedder.model}` : ''}
+        </span>
+      </div>
+      {d.embedder?.reason && d.mode !== 'hybrid' && <p className="text-muted">{d.embedder.reason}</p>}
+      <Switch
+        id="memory-semantic"
+        label="Recherche sémantique locale"
+        description="Embeddings calculés sur cet ordinateur (aucun envoi du contenu). Nécessite le moteur Transformers.js ; sinon BM25 seul."
+        checked={d.settings.semantic}
+        onChange={(semantic) => void save.run({ ...d.settings, semantic })}
+      />
+      <Switch
+        id="memory-download"
+        label="Autoriser le téléchargement du modèle"
+        description="Premier usage : récupère le modèle depuis Hugging Face dans le dossier de données."
+        checked={d.settings.allowModelDownload}
+        onChange={(allowModelDownload) => void save.run({ ...d.settings, allowModelDownload })}
+      />
+      {note && <p className="text-info-fg">{note}</p>}
+      <ErrorBox error={save.error} />
+    </div>
   );
 }
 
