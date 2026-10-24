@@ -196,7 +196,6 @@ class LiveSession implements GeminiLiveSession {
       },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
-      enableAffectiveDialog: c.affectiveDialogue ?? true,
       // A resumption handle lets a new connection continue the same conversation.
       sessionResumption: this.resumeHandle ? { handle: this.resumeHandle } : {},
       contextWindowCompression: { slidingWindow: {} },

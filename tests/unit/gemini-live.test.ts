@@ -54,7 +54,6 @@ describe('ouverture de session Gemini Live (simulée)', () => {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }, languageCode: 'fr-FR' },
       },
       systemInstruction: { parts: [{ text: 'Sois bref.' }] },
-      enableAffectiveDialog: true,
       inputAudioTranscription: {},
       outputAudioTranscription: {},
     });
@@ -64,10 +63,10 @@ describe('ouverture de session Gemini Live (simulée)', () => {
     expect(s.state).toBe('ready');
     s.close();
   });
-  it('désactive le dialogue affectif sur demande et refuse une clé absente', async () => {
+  it('ouvre une session sans le champ enableAffectiveDialog et refuse une clé absente', async () => {
     const { p, f } = provider();
     const s = await p.openSession({ model: 'gemini-3.8-live', affectiveDialogue: false });
-    expect(f.last().of('setup')[0]!.enableAffectiveDialog).toBe(false);
+    expect(f.last().of('setup')[0]!).not.toHaveProperty('enableAffectiveDialog');
     s.close();
     const none = new GeminiLiveProvider({ getApiKey: async () => null, webSocketFactory: f.factory });
     await expect(none.openSession({ model: 'gemini-3.8-live' })).rejects.toMatchObject({
