@@ -1,0 +1,173 @@
+{
+  "note": "Jeu de référence pour comparer les recherches mémoire. 'lexical' : la requête partage des mots (éventuellement fléchis) avec le souvenir attendu ; 'paraphrase' : autre formulation, avec peu ou pas de mots significatifs communs (certaines partagent un nom propre ou un mot).",
+  "memories": [
+    {
+      "id": "m01",
+      "kind": "preference",
+      "content": "Les rapports doivent être rédigés en français au format Markdown."
+    },
+    {
+      "id": "m02",
+      "kind": "preference",
+      "content": "Toujours sauvegarder une copie avant de modifier un fichier de configuration."
+    },
+    {
+      "id": "m03",
+      "kind": "procedure",
+      "content": "Pour publier une version : lancer les tests, créer une étiquette git puis pousser la branche principale."
+    },
+    {
+      "id": "m04",
+      "kind": "knowledge",
+      "content": "Le dossier des factures fournisseurs se trouve dans Documents/Comptabilité/2026."
+    },
+    {
+      "id": "m05",
+      "kind": "knowledge",
+      "content": "L'imprimante du bureau s'appelle HP-Etage2 et nécessite le pilote PCL6."
+    },
+    {
+      "id": "m06",
+      "kind": "preference",
+      "content": "Ne jamais envoyer de courriel sans validation explicite de l'utilisateur."
+    },
+    {
+      "id": "m07",
+      "kind": "mission_summary",
+      "content": "Mission « classer les photos de vacances » terminée : 412 images triées par année et par lieu."
+    },
+    {
+      "id": "m08",
+      "kind": "knowledge",
+      "content": "Le serveur de développement écoute sur le port 5173 et nécessite Node 22."
+    },
+    {
+      "id": "m09",
+      "kind": "procedure",
+      "content": "Réinitialiser le mot de passe Wi-Fi : ouvrir l'interface du routeur à l'adresse 192.168.1.1."
+    },
+    {
+      "id": "m10",
+      "kind": "knowledge",
+      "content": "La réunion hebdomadaire d'équipe a lieu le lundi à neuf heures."
+    },
+    {
+      "id": "m11",
+      "kind": "mission_summary",
+      "content": "Mission « comparer trois offres d'assurance automobile » : l'offre B est la moins chère."
+    },
+    {
+      "id": "m12",
+      "kind": "preference",
+      "content": "Préférer les graphiques en barres aux camemberts dans les présentations."
+    },
+    {
+      "id": "m13",
+      "kind": "knowledge",
+      "content": "Les sauvegardes nocturnes du NAS sont conservées trente jours."
+    },
+    {
+      "id": "m14",
+      "kind": "procedure",
+      "content": "Pour vider le cache du navigateur Edge : Paramètres, Confidentialité, Effacer les données de navigation."
+    },
+    {
+      "id": "m15",
+      "kind": "knowledge",
+      "content": "Le contrat de location de l'appartement se termine en septembre 2027."
+    },
+    {
+      "id": "m16",
+      "kind": "mission_summary",
+      "content": "Mission « résumer les actualités technologiques » : synthèse quotidienne enregistrée dans Notes/Veille."
+    },
+    {
+      "id": "m17",
+      "kind": "preference",
+      "content": "Utiliser le fuseau horaire Europe/Paris pour toutes les dates."
+    },
+    {
+      "id": "m18",
+      "kind": "knowledge",
+      "content": "Le médecin traitant est disponible le mercredi après-midi sur rendez-vous."
+    },
+    {
+      "id": "m19",
+      "kind": "procedure",
+      "content": "Exporter la base clients : ouvrir le CRM, menu Outils, Export CSV avec séparateur point-virgule."
+    },
+    {
+      "id": "m20",
+      "kind": "knowledge",
+      "content": "Le budget alimentaire mensuel du foyer est fixé à six cents euros."
+    },
+    {
+      "id": "m21",
+      "kind": "preference",
+      "content": "Garder les noms de fichiers en minuscules, sans espaces ni accents."
+    },
+    {
+      "id": "m22",
+      "kind": "mission_summary",
+      "content": "Mission « réserver un train pour Lyon » annulée : aucune place disponible le vendredi."
+    },
+    {
+      "id": "m23",
+      "kind": "knowledge",
+      "content": "Le chat de la maison est allergique au poulet ; acheter des croquettes au saumon."
+    },
+    {
+      "id": "m24",
+      "kind": "procedure",
+      "content": "Mettre à jour Windows : Paramètres, Windows Update, Rechercher des mises à jour, puis redémarrer."
+    },
+    {
+      "id": "m25",
+      "kind": "knowledge",
+      "content": "La voiture doit passer le contrôle technique avant la fin du mois de juin."
+    },
+    {
+      "id": "m26",
+      "kind": "preference",
+      "content": "Les tableaux de dépenses utilisent deux décimales et le symbole euro."
+    },
+    {
+      "id": "m27",
+      "kind": "knowledge",
+      "content": "Le mot de passe du coffre est géré par le gestionnaire Bitwarden, jamais en clair."
+    },
+    {
+      "id": "m28",
+      "kind": "mission_summary",
+      "content": "Mission « nettoyer le dossier Téléchargements » : 3,2 Go de fichiers obsolètes archivés."
+    },
+    { "id": "m29", "kind": "knowledge", "content": "Les enfants ont piscine le samedi matin à dix heures." },
+    {
+      "id": "m30",
+      "kind": "procedure",
+      "content": "Compresser une vidéo : utiliser HandBrake avec le préréglage Fast 1080p30."
+    }
+  ],
+  "queries": [
+    { "q": "rapport markdown", "expect": ["m01"], "type": "lexical" },
+    { "q": "étiquette git publication", "expect": ["m03"], "type": "lexical" },
+    { "q": "factures fournisseur", "expect": ["m04"], "type": "lexical" },
+    { "q": "pilote imprimante", "expect": ["m05"], "type": "lexical" },
+    { "q": "port serveur développement", "expect": ["m08"], "type": "lexical" },
+    { "q": "sauvegarde NAS", "expect": ["m13"], "type": "lexical" },
+    { "q": "cache Edge", "expect": ["m14"], "type": "lexical" },
+    { "q": "export CSV clients", "expect": ["m19"], "type": "lexical" },
+    { "q": "contrôle technique voiture", "expect": ["m25"], "type": "lexical" },
+    { "q": "HandBrake vidéo", "expect": ["m30"], "type": "lexical" },
+    { "q": "quand se termine le bail du logement", "expect": ["m15"], "type": "paraphrase" },
+    { "q": "nourriture pour le félin", "expect": ["m23"], "type": "paraphrase" },
+    { "q": "combien dépenser pour les courses chaque mois", "expect": ["m20"], "type": "paraphrase" },
+    { "q": "trajet ferroviaire vers Lyon", "expect": ["m22"], "type": "paraphrase" },
+    { "q": "activité aquatique des gosses", "expect": ["m29"], "type": "paraphrase" },
+    { "q": "devis assurance véhicule", "expect": ["m11"], "type": "paraphrase" },
+    { "q": "envoyer un e-mail sans demander", "expect": ["m06"], "type": "paraphrase" },
+    { "q": "rendez-vous chez le docteur", "expect": ["m18"], "type": "paraphrase" },
+    { "q": "heure locale à utiliser", "expect": ["m17"], "type": "paraphrase" },
+    { "q": "libérer de l'espace disque", "expect": ["m28"], "type": "paraphrase" }
+  ]
+}

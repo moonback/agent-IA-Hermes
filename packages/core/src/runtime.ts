@@ -18,6 +18,7 @@ import { GeminiLiveProvider, type WebSocketFactory } from './model-providers/gem
 import { AudioBridge, type VoiceSink } from './voice/audio-bridge';
 import { VoiceAgent } from './voice/voice-agent';
 import { DEFAULT_LIVE_MODEL, VoiceSettings } from './voice/catalog';
+import { MemoryIndex, TransformersEmbedder, type Embedder } from './memory/semantic';
 import type { ModelInfo, ModelProvider } from './model-providers/types';
 import { PolicyConfig } from './policy-engine/policy';
 import { canonicalize } from './policy-engine/paths';
@@ -26,14 +27,26 @@ import { ToolExecutor } from './tools/executor';
 import { ApprovalBroker } from './tools/approvals';
 import { PlaywrightBrowserService, type BrowserService } from './tools/browser';
 import { PowerShellUiaAdapter, UnavailableDesktopAdapter, type DesktopAdapter } from './tools/desktop';
-import { NoSearchProvider, OpenRouterWebSearchProvider, type SearchProvider } from './tools/web-search';
+import { OpenRouterWebSearchProvider, type SearchProvider } from './tools/web-search';
+import {
+  BRAVE_KEY_NAME,
+  BraveSearchProvider,
+  SearchProviderRegistry,
+  SearchSettings,
+  TAVILY_KEY_NAME,
+  TavilySearchProvider,
+} from './tools/search-providers';
 import { killAllProcesses } from './tools/process';
+import { SandboxSettings, jobRunnerPath } from './tools/sandbox';
 import type { ToolServices } from './tools/types';
 import { LlmGateway, ProviderSettings, type ModelAssignment } from './agents/llm-gateway';
 import { Planner } from './agents/planner';
 import { Verifier } from './agents/verifier';
 import { ToolLoopAgent, type Agent } from './agents/tool-agent';
 import { Orchestrator } from './orchestrator/orchestrator';
+import { Scheduler } from './scheduler/scheduler';
+import { ProactiveSettings } from './scheduler/triggers';
+import { DesktopNotifier, type Notifier } from './notifications/notifier';
 
 export const API_KEY_NAME = 'OPENROUTER_API_KEY';
 /** Vault entry of the Google key; GOOGLE_API_KEY in the environment is also accepted (development). */
@@ -63,10 +76,15 @@ export const GeminiSettings = z.object({
 });
 export type GeminiSettings = z.infer<typeof GeminiSettings>;
 
-export const SearchSettings = z.object({ provider: z.enum(['none', 'openrouter-web']).default('none') });
-export type SearchSettings = z.infer<typeof SearchSettings>;
-
 export const BrowserSettings = z.object({ headless: z.boolean().default(true) });
+
+export const MemorySettings = z.object({
+  /** Local embeddings for semantic search (BM25 keyword search always works). */
+  semantic: z.boolean().default(true),
+  /** First use downloads the model from Hugging Face into the data folder. */
+  allowModelDownload: z.boolean().default(true),
+});
+export type MemorySettings = z.infer<typeof MemorySettings>;
 
 const ModelId = z.string().regex(/^~?[\w.:/-]{3,120}$/, 'identifiant de modèle invalide');
 
@@ -83,6 +101,15 @@ export interface RuntimeOptions {
   geminiLiveUrl?: string;
   /** Tests only: Gemini REST endpoint on loopback. */
   geminiBaseUrl?: string;
+  /** Embedding engine; undefined = local Transformers.js engine if installed, null = keyword search only. */
+  embedder?: Embedder | null;
+  /** Directory holding the embedding model files (offline installs). */
+  embeddingModelPath?: string;
+  /** Tests: replaces the Windows toast notifier; scheduler tick period. */
+  notifier?: Notifier;
+  schedulerTickMs?: number;
+  /** false: triggers are stored but nothing fires (tests that drive the scheduler by hand). */
+  startScheduler?: boolean;
   logToConsole?: boolean;
 }
 
@@ -195,6 +222,27 @@ export async function createRuntime(opts: RuntimeOptions) {
       store.setSetting('app_settings', 'voice', v);
       return v;
     },
+    memory: (): MemorySettings => MemorySettings.parse(store.getSetting('app_settings', 'memory', {})),
+    setMemory(input: unknown): MemorySettings {
+      const m = MemorySettings.parse(input);
+      store.setSetting('app_settings', 'memory', m);
+      return m;
+    },
+    sandbox: (): SandboxSettings => SandboxSettings.parse(store.getSetting('app_settings', 'sandbox', {})),
+    setSandbox(input: unknown): SandboxSettings {
+      const s = SandboxSettings.parse(input);
+      store.setSetting('app_settings', 'sandbox', s);
+      telemetry.record({
+        category: 'security',
+        level: s.enabled ? 'info' : 'warn',
+        type: 'sandbox.updated',
+        message: s.enabled
+          ? `Bac à sable des processus : ${s.memoryMb} Mo, ${s.cpuPercent} % CPU, ${s.maxProcesses} processus`
+          : 'Bac à sable des processus désactivé par l’utilisateur',
+        data: s,
+      });
+      return s;
+    },
     budget: (): MissionBudget => MissionBudget.parse(store.getSetting('app_settings', 'budget', {})),
     setBudget(input: unknown): MissionBudget {
       const b = MissionBudget.parse(input);
@@ -207,6 +255,22 @@ export async function createRuntime(opts: RuntimeOptions) {
       store.setSetting('app_settings', 'search', s);
       executor?.invalidateAvailability();
       return s;
+    },
+    proactive: (): ProactiveSettings =>
+      ProactiveSettings.parse(store.getSetting('app_settings', 'proactive', {})),
+    setProactive(input: unknown): ProactiveSettings {
+      const p = ProactiveSettings.parse(input);
+      store.setSetting('app_settings', 'proactive', p);
+      telemetry.record({
+        category: 'security',
+        level: 'warn',
+        type: 'proactive.updated',
+        message: p.enabled
+          ? `Missions proactives : ${p.maxCostUsd.toFixed(2)} $ max. par mission, ${p.maxRunsPerDay} par 24 h`
+          : 'Missions proactives désactivées',
+        data: p,
+      });
+      return p;
     },
     browser: () => BrowserSettings.parse(store.getSetting('app_settings', 'browser', {})),
     assignments(): Record<ModelRole, ModelAssignment | null> {
@@ -374,16 +438,37 @@ export async function createRuntime(opts: RuntimeOptions) {
     },
     () => settings.assignments().primary?.modelId ?? null,
   );
-  const noSearch = new NoSearchProvider();
-  const search: SearchProvider = {
-    get id() {
-      return settings.search().provider;
-    },
-    availability: () =>
-      settings.search().provider === 'openrouter-web' ? webSearch.availability() : noSearch.availability(),
-    search: (q, n, s) =>
-      settings.search().provider === 'openrouter-web' ? webSearch.search(q, n, s) : noSearch.search(),
-  };
+  const searchRegistry = new SearchProviderRegistry(
+    new Map<string, SearchProvider>([
+      [
+        'tavily',
+        new TavilySearchProvider({ getKey: () => secrets.get(TAVILY_KEY_NAME), fetchImpl: opts.fetchImpl }),
+      ],
+      [
+        'brave',
+        new BraveSearchProvider({ getKey: () => secrets.get(BRAVE_KEY_NAME), fetchImpl: opts.fetchImpl }),
+      ],
+      ['openrouter-web', webSearch],
+    ]),
+    settings.search,
+  );
+  const search: SearchProvider = searchRegistry;
+
+  const memorySettings = settings.memory();
+  const embedder: Embedder | null =
+    opts.embedder !== undefined
+      ? opts.embedder
+      : memorySettings.semantic
+        ? new TransformersEmbedder({
+            dataDir: opts.dataDir,
+            allowRemoteModels: memorySettings.allowModelDownload,
+            localModelPath: opts.embeddingModelPath ?? process.env.HERMES_EMBEDDING_MODEL_PATH,
+            logger,
+          })
+        : null;
+  const memoryIndex = new MemoryIndex(store, embedder, logger);
+  // Existing memories (and those saved while the engine was unavailable) get their vectors lazily.
+  memoryIndex.schedule(5_000);
 
   const services: ToolServices = {
     store,
@@ -393,6 +478,9 @@ export async function createRuntime(opts: RuntimeOptions) {
     browser,
     desktop,
     search,
+    memoryIndex,
+    sandbox: settings.sandbox,
+    sessionEnv: new Map(),
     missionControl: {
       pause: (id, reason) => orchestrator?.pause(id, reason),
       cancel: (id, reason) => void orchestrator?.cancel(id, reason),
@@ -430,7 +518,10 @@ export async function createRuntime(opts: RuntimeOptions) {
     getPolicy: settings.policy,
     defaultBudget: settings.budget,
     unavailableTools,
-    closeMissionResources: (id) => browser.closeMission(id),
+    closeMissionResources: (id) => {
+      services.sessionEnv.delete(id);
+      return browser.closeMission(id);
+    },
     stopAllWorkers: async () => {
       const processes = killAllProcesses();
       await browser.closeAll();
@@ -456,6 +547,32 @@ export async function createRuntime(opts: RuntimeOptions) {
     });
   };
   const recovery = orch.recoverOnStartup();
+
+  const notifier =
+    opts.notifier ??
+    new DesktopNotifier({
+      telemetry,
+      logger,
+      desktopEnabled: () => settings.proactive().desktopNotifications,
+    });
+  const scheduler = new Scheduler({
+    store,
+    telemetry,
+    logger,
+    notifier,
+    missions: {
+      createMission: (request, budget) => orch.createMission(request, budget),
+      start: (id) => orch.start(id),
+      isActive: (id) => orch.isActive(id),
+      idle: (id) => orch.idle(id),
+      isHalted: () => toolExecutor.isHalted,
+    },
+    defaultBudget: settings.budget,
+    proactive: settings.proactive,
+    allowedRoots: () => settings.policy().allowedRoots,
+    tickMs: opts.schedulerTickMs,
+  });
+  if (opts.startScheduler !== false) scheduler.start();
   telemetry.record({
     category: 'application',
     type: 'app.started',
@@ -472,6 +589,23 @@ export async function createRuntime(opts: RuntimeOptions) {
     settings,
     provider,
     catalog: { get: loadCatalog, refresh: refreshCatalog },
+    memoryIndex,
+    sandboxStatus: () => {
+      const runner = jobRunnerPath();
+      const s = settings.sandbox();
+      return {
+        settings: s,
+        runner,
+        active: s.enabled && runner !== null,
+        reason: !s.enabled
+          ? 'désactivé dans les paramètres'
+          : runner
+            ? null
+            : process.platform === 'win32'
+              ? 'utilitaire hermes-jobrun introuvable'
+              : 'Job Objects disponibles sous Windows uniquement',
+      };
+    },
     gemini,
     geminiLive,
     geminiKey,
@@ -483,10 +617,14 @@ export async function createRuntime(opts: RuntimeOptions) {
     browser,
     desktop,
     search,
+    searchRegistry,
     orchestrator: orch,
+    scheduler,
+    notifier,
     unavailableTools,
     recovery,
     async close() {
+      scheduler.stop();
       await browser.closeAll();
       killAllProcesses();
       store.close();

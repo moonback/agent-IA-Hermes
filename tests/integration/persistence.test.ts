@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, describe, expect, it } from 'vitest';
-import { HermesStore, MissionBudget, Plan } from '@hermes/core';
+import { HermesStore, MIGRATIONS, MissionBudget, Plan } from '@hermes/core';
 import { tempDir } from '../helpers/runtime';
 
 const dir = tempDir('hermes-db-');
@@ -23,9 +23,9 @@ const plan = Plan.parse({
 
 describe('persistance SQLite', () => {
   it('applique les migrations versionnées une seule fois', () => {
-    expect(store.schemaVersion()).toBe(1);
+    expect(store.schemaVersion()).toBe(MIGRATIONS.length);
     const again = new HermesStore(join(dir, 'h.db'));
-    expect(again.schemaVersion()).toBe(1);
+    expect(again.schemaVersion()).toBe(MIGRATIONS.length);
     again.close();
   });
 

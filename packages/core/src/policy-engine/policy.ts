@@ -28,6 +28,8 @@ export interface ResourceClaims {
   paths?: { path: string; access: 'read' | 'write' }[];
   urls?: string[];
   command?: string;
+  /** Several commands (shell.pipe): each one must be allowed. */
+  commands?: string[];
   app?: string;
 }
 
@@ -98,9 +100,11 @@ export function evaluatePolicy(cfg: PolicyConfig, req: PolicyRequest): PolicyDec
       askReasons.push(`Accès à un domaine non encore autorisé : ${url.hostname}`);
     }
   }
-  if (req.resources.command !== undefined && !cfg.allowedCommands.includes(req.resources.command)) {
-    return deny(`Commande non autorisée : ${req.resources.command}`);
-  }
+  for (const c of [
+    ...(req.resources.command !== undefined ? [req.resources.command] : []),
+    ...(req.resources.commands ?? []),
+  ])
+    if (!cfg.allowedCommands.includes(c)) return deny(`Commande non autorisée : ${c}`);
   if (
     req.resources.app !== undefined &&
     !cfg.allowedApps.map((a) => a.toLowerCase()).includes(req.resources.app.toLowerCase())

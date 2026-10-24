@@ -3,7 +3,7 @@ import { browserClick, browserExtract, browserFill, browserNavigate } from './br
 import { desktopClick, desktopInspect, desktopKeypress, desktopType, screenObserve } from './desktop';
 import { filesMove, filesRead, filesSearch, filesWrite } from './files';
 import { memorySave, memorySearch, missionCancel, missionPause, missionVerify } from './mission';
-import { processRun } from './process';
+import { processRun, shellEnv, shellPipe } from './process';
 import { webSearch } from './web-search';
 import type { AnyTool } from './types';
 import type { ChatToolSpec } from '../model-providers/types';
@@ -23,6 +23,8 @@ export const ALL_TOOLS: readonly AnyTool[] = [
   filesMove,
   filesWrite,
   processRun,
+  shellPipe,
+  shellEnv,
   webSearch,
   memorySearch,
   memorySave,

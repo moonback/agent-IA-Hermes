@@ -6,6 +6,8 @@ import type { Telemetry } from '../observability/telemetry';
 import type { BrowserService } from './browser';
 import type { DesktopAdapter } from './desktop';
 import type { SearchProvider } from './web-search';
+import type { MemoryIndex } from '../memory/semantic';
+import type { SandboxSettings } from './sandbox';
 
 export interface Availability {
   available: boolean;
@@ -21,6 +23,12 @@ export interface ToolServices {
   browser: BrowserService;
   desktop: DesktopAdapter;
   search: SearchProvider;
+  /** Hybrid (BM25 + embeddings) memory search; vectors are computed in the background. */
+  memoryIndex: MemoryIndex;
+  /** Process sandbox limits (Windows Job Objects). */
+  sandbox(): SandboxSettings;
+  /** Per-mission environment variables set with shell.env. */
+  sessionEnv: Map<string, Record<string, string>>;
   missionControl: {
     pause(missionId: string, reason: string): void;
     cancel(missionId: string, reason: string): void;

@@ -1,19 +1,41 @@
 import { useState } from 'react';
-import { FileLock2, Plus, ShieldCheck, Wrench, X } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Box,
+  FileLock2,
+  KeyRound,
+  Plus,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { api } from '../api';
 import { useAction, useResource } from '../hooks';
 import type { MissionEvent, Policy, ToolInfo } from '../types';
 import { EventList } from '../components/shared';
-import { Badge, Button, Card, ErrorBox, Field, Input, Loading, PageHeader, Select } from '../components/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  DataList,
+  ErrorBox,
+  Field,
+  Input,
+  Loading,
+  PageHeader,
+  Select,
+  Switch,
+  fmtDate,
+} from '../components/ui';
 
 import { RISK_LABEL, RISK_TONE } from '../labels';
 
 export function ToolsPage() {
   const policy = useResource<Policy>('/api/policy', { live: false });
   const tools = useResource<ToolInfo[]>('/api/tools', { live: false });
-  const search = useResource<{ provider: 'none' | 'openrouter-web' }>('/api/search-settings', {
-    live: false,
-  });
   // Local edits override the server copy until saved; null means "no pending edit".
   const [edits, setDraft] = useState<Policy | null>(null);
   const draft = edits ?? policy.data;
@@ -22,13 +44,6 @@ export function ToolsPage() {
     () => {
       setDraft(null);
       policy.reload();
-      tools.reload();
-    },
-  );
-  const saveSearch = useAction(
-    (provider: string) => api('/api/search-settings', { method: 'PUT', body: { provider } }),
-    () => {
-      search.reload();
       tools.reload();
     },
   );
@@ -104,24 +119,8 @@ export function ToolsPage() {
             placeholder="notepad"
             onChange={(allowedApps) => setDraft({ ...draft, allowedApps })}
           />
-          <Card title="Recherche Web">
-            <Field
-              id="search-provider"
-              label="Fournisseur"
-              hint="« OpenRouter Web » utilise le plugin web d’OpenRouter (facturé par requête). Aucune recherche n’est simulée."
-            >
-              <Select
-                id="search-provider"
-                value={search.data?.provider ?? 'none'}
-                onChange={(e) => void saveSearch.run(e.target.value)}
-                disabled={saveSearch.pending}
-              >
-                <option value="none">Aucun (recherche indisponible)</option>
-                <option value="openrouter-web">OpenRouter Web</option>
-              </Select>
-            </Field>
-            <ErrorBox error={saveSearch.error} />
-          </Card>
+          <SearchCard onChange={tools.reload} />
+          <SandboxCard />
         </div>
       )}
 
@@ -321,6 +320,8 @@ function AuditCard() {
               'browser',
               'desktop',
               'persistence',
+              'scheduler',
+              'voice',
               'application',
             ].map((c) => (
               <option key={c} value={c}>
@@ -352,6 +353,254 @@ function AuditCard() {
       {result && <p className="mb-2 text-sm font-medium">{result}</p>}
       <ErrorBox error={verify.error ?? events.error?.message} />
       <EventList events={events.data ?? []} />
+    </Card>
+  );
+}
+
+// ------------------------------------------------------------------ web search providers
+
+type SearchId = 'tavily' | 'brave' | 'openrouter-web';
+interface SearchState {
+  settings: { provider: 'auto' | 'none' | SearchId; order: SearchId[] };
+  providers: { id: SearchId; available: boolean; reason: string | null; cooldownUntil: string | null }[];
+  keys: { tavily: boolean; brave: boolean };
+}
+const SEARCH_LABEL: Record<SearchId, string> = {
+  tavily: 'Tavily',
+  brave: 'Brave Search',
+  'openrouter-web': 'OpenRouter Web',
+};
+const SEARCH_HINT: Record<SearchId, string> = {
+  tavily: 'API conçue pour les agents ; renvoie sources et une réponse rédigée par Tavily.',
+  brave: 'Index Web indépendant ; résultats bruts, sans synthèse.',
+  'openrouter-web': 'Plugin web d’OpenRouter avec le modèle principal (facturé par requête).',
+};
+
+function SearchCard({ onChange }: { onChange: () => void }) {
+  const state = useResource<SearchState>('/api/search-providers', { live: false });
+  const done = () => {
+    state.reload();
+    onChange();
+  };
+  const saveSettings = useAction(
+    (s: SearchState['settings']) => api('/api/search-settings', { method: 'PUT', body: s }),
+    done,
+  );
+  const [keys, setKeys] = useState<Record<string, string>>({});
+  const saveKey = useAction(
+    (id: 'tavily' | 'brave') =>
+      api(`/api/search-providers/${id}/key`, { method: 'PUT', body: { apiKey: keys[id] ?? '' } }),
+    () => {
+      setKeys({});
+      done();
+    },
+  );
+  const deleteKey = useAction(
+    (id: 'tavily' | 'brave') => api(`/api/search-providers/${id}/key`, { method: 'DELETE' }),
+    done,
+  );
+  const s = state.data?.settings;
+  const move = (i: number, d: -1 | 1) => {
+    if (!s) return;
+    const order = [...s.order];
+    [order[i], order[i + d]] = [order[i + d]!, order[i]!];
+    void saveSettings.run({ ...s, order });
+  };
+  return (
+    <Card title="Recherche Web" icon={<Search className="size-4" />}>
+      {!s && <Loading />}
+      {s && (
+        <div className="space-y-3">
+          <Field
+            id="search-provider"
+            label="Fournisseur"
+            hint="« Automatique » essaie dans l’ordre les fournisseurs configurés et passe au suivant en cas de quota ou de limite de débit. Aucune recherche n’est simulée."
+          >
+            <Select
+              id="search-provider"
+              value={s.provider}
+              disabled={saveSettings.pending}
+              onChange={(e) =>
+                void saveSettings.run({
+                  ...s,
+                  provider: e.target.value as SearchState['settings']['provider'],
+                })
+              }
+            >
+              <option value="none">Aucun (recherche indisponible)</option>
+              <option value="auto">Automatique (ordre ci-dessous)</option>
+              <option value="tavily">Tavily</option>
+              <option value="brave">Brave Search</option>
+              <option value="openrouter-web">OpenRouter Web</option>
+            </Select>
+          </Field>
+          <ol className="space-y-2">
+            {s.order.map((id, i) => {
+              const st = state.data?.providers.find((p) => p.id === id);
+              const keyed = id === 'tavily' || id === 'brave';
+              return (
+                <li key={id} className="rounded-control p-2 ring-1 ring-line ring-inset">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {s.provider === 'auto' && <span className="text-xs text-faint">{i + 1}.</span>}
+                    <span className="font-medium">{SEARCH_LABEL[id]}</span>
+                    <Badge tone={st?.available ? 'success' : 'warning'}>
+                      {st?.available ? 'disponible' : (st?.reason ?? 'indisponible')}
+                    </Badge>
+                    {s.provider === 'auto' && (
+                      <span className="ml-auto flex gap-1">
+                        <Button
+                          variant="ghost"
+                          aria-label={`Monter ${SEARCH_LABEL[id]}`}
+                          icon={<ArrowUp className="size-4" />}
+                          disabled={i === 0}
+                          onClick={() => move(i, -1)}
+                        />
+                        <Button
+                          variant="ghost"
+                          aria-label={`Descendre ${SEARCH_LABEL[id]}`}
+                          icon={<ArrowDown className="size-4" />}
+                          disabled={i === s.order.length - 1}
+                          onClick={() => move(i, 1)}
+                        />
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted">{SEARCH_HINT[id]}</p>
+                  {st?.cooldownUntil && (
+                    <p className="text-xs text-warning-fg">En pause jusqu’au {fmtDate(st.cooldownUntil)}</p>
+                  )}
+                  {keyed && (
+                    <form
+                      className="mt-2 flex flex-wrap gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void saveKey.run(id);
+                      }}
+                    >
+                      <Input
+                        type="password"
+                        autoComplete="off"
+                        aria-label={`Clé API ${SEARCH_LABEL[id]}`}
+                        placeholder={
+                          state.data?.keys[id] ? 'Clé enregistrée — saisir pour remplacer' : 'Clé API'
+                        }
+                        value={keys[id] ?? ''}
+                        onChange={(e) => setKeys({ ...keys, [id]: e.target.value })}
+                        className="w-56 flex-1"
+                      />
+                      <Button type="submit" icon={<KeyRound className="size-4" />} disabled={!keys[id]}>
+                        Enregistrer
+                      </Button>
+                      {state.data?.keys[id] && (
+                        <Button
+                          variant="ghost"
+                          aria-label={`Supprimer la clé ${SEARCH_LABEL[id]}`}
+                          icon={<Trash2 className="size-4" />}
+                          onClick={() => void deleteKey.run(id)}
+                        />
+                      )}
+                    </form>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          <p className="text-xs text-faint">
+            Les clés sont stockées dans le coffre du système ; elles ne sont jamais renvoyées à l’interface.
+          </p>
+        </div>
+      )}
+      <ErrorBox error={state.error?.message ?? saveSettings.error ?? saveKey.error ?? deleteKey.error} />
+    </Card>
+  );
+}
+
+// ------------------------------------------------------------------ process sandbox
+
+interface SandboxState {
+  settings: { enabled: boolean; memoryMb: number; cpuPercent: number; maxProcesses: number };
+  runner: string | null;
+  active: boolean;
+  reason: string | null;
+}
+
+function SandboxCard() {
+  const state = useResource<SandboxState>('/api/sandbox', { live: false });
+  const [edit, setEdit] = useState<SandboxState['settings'] | null>(null);
+  const draft = edit ?? state.data?.settings ?? null;
+  const save = useAction(
+    (s: SandboxState['settings']) => api('/api/sandbox', { method: 'PUT', body: s }),
+    () => {
+      setEdit(null);
+      state.reload();
+    },
+  );
+  const num = (k: 'memoryMb' | 'cpuPercent' | 'maxProcesses', v: string) =>
+    draft && setEdit({ ...draft, [k]: Number(v) });
+  return (
+    <Card title="Bac à sable des processus" icon={<Box className="size-4" />}>
+      {!draft && <Loading />}
+      {draft && state.data && (
+        <div className="space-y-3">
+          <DataList
+            rows={[
+              [
+                'État',
+                <Badge key="s" tone={state.data.active ? 'success' : 'warning'}>
+                  {state.data.active ? 'Job Object actif' : `Inactif — ${state.data.reason}`}
+                </Badge>,
+              ],
+              ['Utilitaire', state.data.runner ?? '—'],
+            ]}
+          />
+          <Switch
+            id="sandbox-enabled"
+            label="Isoler process.run et shell.pipe (Windows Job Object)"
+            description="Limites de mémoire, de CPU et de nombre de processus ; toute l’arborescence est arrêtée à la fin ou à l’expiration du délai."
+            checked={draft.enabled}
+            onChange={(enabled) => setEdit({ ...draft, enabled })}
+          />
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field id="sb-mem" label="Mémoire (Mo)">
+              <Input
+                id="sb-mem"
+                type="number"
+                min={64}
+                value={draft.memoryMb}
+                onChange={(e) => num('memoryMb', e.target.value)}
+              />
+            </Field>
+            <Field id="sb-cpu" label="CPU max. (%)">
+              <Input
+                id="sb-cpu"
+                type="number"
+                min={5}
+                max={100}
+                value={draft.cpuPercent}
+                onChange={(e) => num('cpuPercent', e.target.value)}
+              />
+            </Field>
+            <Field id="sb-proc" label="Processus max.">
+              <Input
+                id="sb-proc"
+                type="number"
+                min={1}
+                value={draft.maxProcesses}
+                onChange={(e) => num('maxProcesses', e.target.value)}
+              />
+            </Field>
+          </div>
+          <Button
+            variant="primary"
+            disabled={!edit}
+            pending={save.pending}
+            onClick={() => edit && void save.run(edit)}
+          >
+            Enregistrer
+          </Button>
+        </div>
+      )}
+      <ErrorBox error={state.error?.message ?? save.error} />
     </Card>
   );
 }

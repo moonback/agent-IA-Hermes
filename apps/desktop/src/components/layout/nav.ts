@@ -1,5 +1,6 @@
 import {
   Bot,
+  CalendarClock,
   Brain,
   History,
   LayoutDashboard,
@@ -28,6 +29,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { id: 'chat', label: 'Chat', icon: MessageSquare },
       { id: 'voice', label: 'Assistant vocal', icon: Mic },
       { id: 'missions', label: 'Missions', icon: ListChecks },
+      { id: 'schedule', label: 'Planification', icon: CalendarClock },
     ],
   },
   {

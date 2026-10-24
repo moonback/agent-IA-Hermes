@@ -72,7 +72,7 @@ export const missionVerify = defineTool({
 export const memorySearch = defineTool({
   id: 'memory.search',
   description:
-    'Cherche dans la mémoire persistante (résumés de missions, préférences, procédures). Les résultats peuvent être obsolètes.',
+    'Cherche dans la mémoire persistante (résumés de missions, préférences, procédures) : mots-clés (BM25) et, si disponible, similarité sémantique. Les résultats peuvent être obsolètes.',
   input: z.object({
     query: z.string().min(2).max(300),
     kind: MemoryKind.optional(),
@@ -86,8 +86,12 @@ export const memorySearch = defineTool({
         content: z.string(),
         confidence: z.number().nullable(),
         updatedAt: z.string(),
+        score: z.number(),
+        matchedBy: z.array(z.enum(['keyword', 'semantic'])),
+        similarity: z.number().nullable(),
       }),
     ),
+    mode: z.enum(['hybrid', 'keyword']),
   }),
   allowedAgents: ALL,
   permissions: ['memory.read'],
@@ -100,7 +104,8 @@ export const memorySearch = defineTool({
   availability: alwaysAvailable,
   resources: () => ({}),
   async run(i, ctx) {
-    const entries = ctx.services.store.searchMemory({ text: i.query, kind: i.kind, limit: i.limit });
+    const index = ctx.services.memoryIndex;
+    const entries = await index.search({ text: i.query, kind: i.kind, limit: i.limit });
     return {
       entries: entries.map((e) => ({
         id: e.id,
@@ -108,7 +113,11 @@ export const memorySearch = defineTool({
         content: e.content,
         confidence: e.confidence,
         updatedAt: e.updatedAt,
+        score: Number(e.score.toFixed(5)),
+        matchedBy: e.matchedBy,
+        similarity: e.similarity === null ? null : Number(e.similarity.toFixed(3)),
       })),
+      mode: index.status().mode,
     };
   },
 });
@@ -142,6 +151,7 @@ export const memorySave = defineTool({
       confidence: 0.3,
       tags: [...i.tags, 'non-validé'],
     });
+    ctx.services.memoryIndex.schedule();
     return { id: e.id };
   },
   async verify(_i, o, ctx) {

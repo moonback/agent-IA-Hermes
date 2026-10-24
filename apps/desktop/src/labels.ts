@@ -23,6 +23,10 @@ export const STATUS_TONE: Record<string, Tone> = {
   deduplicated: 'info',
   abandoned: 'neutral',
   started: 'warning',
+  scheduled: 'neutral',
+  awaiting_start: 'warning',
+  skipped: 'neutral',
+  error: 'danger',
 };
 
 export const STATUS_LABEL: Record<string, string> = {
@@ -46,6 +50,10 @@ export const STATUS_LABEL: Record<string, string> = {
   deduplicated: 'dédoublonné',
   abandoned: 'abandonné',
   started: 'incertain',
+  scheduled: 'programmée',
+  awaiting_start: 'à valider',
+  skipped: 'ignorée',
+  error: 'erreur',
 };
 
 export const CONNECTION_LABEL: Record<string, [string, Tone]> = {

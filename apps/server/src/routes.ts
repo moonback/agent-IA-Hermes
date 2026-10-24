@@ -5,6 +5,14 @@ import { z } from 'zod';
 import {
   AGENTS,
   API_KEY_NAME,
+  BRAVE_KEY_NAME,
+  TAVILY_KEY_NAME,
+  TEMPLATE_VARIABLES,
+  TriggerSpec,
+  describeSpec,
+  nextRunFor,
+  type ScheduledTrigger,
+  type TriggerRun,
   DEFAULT_LIVE_MODEL,
   GEMINI_KEY_NAME,
   GEMINI_LIVE_LANGUAGES,
@@ -368,6 +376,101 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
   r.on('PUT', '/api/budget', ({ body }) => rt.settings.setBudget(body));
   r.on('GET', '/api/search-settings', () => rt.settings.search());
   r.on('PUT', '/api/search-settings', ({ body }) => rt.settings.setSearch(body));
+  // Search API keys go to the OS vault like the model keys; the frontend only sees hasKey.
+  const searchKeys = { tavily: TAVILY_KEY_NAME, brave: BRAVE_KEY_NAME } as const;
+  const searchState = async () => ({
+    settings: rt.settings.search(),
+    providers: await rt.searchRegistry.states(),
+    keys: Object.fromEntries(
+      await Promise.all(
+        Object.entries(searchKeys).map(async ([id, name]) => [id, Boolean(await rt.secrets.get(name))]),
+      ),
+    ) as Record<keyof typeof searchKeys, boolean>,
+  });
+  r.on('GET', '/api/search-providers', () => searchState());
+  r.on('PUT', '/api/search-providers/:id/key', async ({ params, body }) => {
+    const id = z.enum(['tavily', 'brave']).parse(params.id);
+    const { apiKey } = z
+      .object({
+        apiKey: z.string().trim().min(10).max(300).regex(/^\S+$/, 'la clé ne doit pas contenir d’espace'),
+      })
+      .parse(body);
+    registerSecret(apiKey);
+    await rt.secrets.set(searchKeys[id], apiKey);
+    rt.executor.invalidateAvailability();
+    rt.telemetry.record({
+      category: 'security',
+      type: 'search.key_saved',
+      message: `Clé ${id === 'tavily' ? 'Tavily' : 'Brave Search'} enregistrée dans le coffre du système`,
+    });
+    return searchState();
+  });
+  r.on('DELETE', '/api/search-providers/:id/key', async ({ params }) => {
+    const id = z.enum(['tavily', 'brave']).parse(params.id);
+    await rt.secrets.delete(searchKeys[id]);
+    rt.executor.invalidateAvailability();
+    rt.telemetry.record({
+      category: 'security',
+      level: 'warn',
+      type: 'search.key_deleted',
+      message: `Clé ${id === 'tavily' ? 'Tavily' : 'Brave Search'} supprimée du coffre`,
+    });
+    return searchState();
+  });
+  r.on('GET', '/api/sandbox', () => rt.sandboxStatus());
+  r.on('PUT', '/api/sandbox', ({ body }) => (rt.settings.setSandbox(body), rt.sandboxStatus()));
+
+  // ------------------------------------------------------------- proactive missions
+  const triggerView = (t: ScheduledTrigger) => ({
+    ...t,
+    description: describeSpec(t.spec),
+    upcoming:
+      t.enabled && t.nextRunAt && (t.spec.kind === 'cron' || t.spec.kind === 'interval')
+        ? upcomingRuns(t.spec, new Date(Date.parse(t.nextRunAt) - 60_000), 10)
+        : [],
+  });
+  const upcomingRuns = (spec: TriggerSpec, after: Date, n: number): string[] => {
+    const out: string[] = [];
+    let cur: Date | null = after;
+    while (out.length < n && (cur = nextRunFor(spec, cur))) out.push(cur.toISOString());
+    return out;
+  };
+  const runView = (run: TriggerRun) => {
+    const m = run.missionId ? store.getMission(run.missionId) : null;
+    return {
+      ...run,
+      mission: m ? { id: m.id, status: m.status, usage: m.usage, endedAt: m.endedAt } : null,
+    };
+  };
+  r.on('GET', '/api/triggers', () => ({
+    triggers: store.listTriggers().map(triggerView),
+    status: rt.scheduler.status(),
+    variables: TEMPLATE_VARIABLES,
+  }));
+  r.on('POST', '/api/triggers', ({ body }) => triggerView(rt.scheduler.create(body)));
+  r.on('PATCH', '/api/triggers/:id', ({ params, body }) =>
+    triggerView(rt.scheduler.update(params.id!, body)),
+  );
+  r.on('DELETE', '/api/triggers/:id', ({ params }) => {
+    if (!rt.scheduler.remove(params.id!)) throw new HermesError('NOT_FOUND', 'Déclencheur introuvable');
+    return { deleted: true };
+  });
+  r.on('POST', '/api/triggers/:id/run', ({ params }) => runView(rt.scheduler.runNow(params.id!)));
+  r.on('GET', '/api/triggers/:id/runs', ({ params, query }) => {
+    store.requireTrigger(params.id!);
+    return store
+      .listTriggerRuns({ triggerId: params.id!, limit: Number(query.get('limit') ?? 50) })
+      .map(runView);
+  });
+  r.on('GET', '/api/trigger-runs', ({ query }) =>
+    store.listTriggerRuns({ limit: Number(query.get('limit') ?? 100) }).map(runView),
+  );
+  r.on('POST', '/api/triggers/preview', ({ body }) => {
+    const { spec } = z.object({ spec: TriggerSpec }).parse(body);
+    return { description: describeSpec(spec), upcoming: upcomingRuns(spec, new Date(), 10) };
+  });
+  r.on('GET', '/api/proactive-settings', () => rt.settings.proactive());
+  r.on('PUT', '/api/proactive-settings', ({ body }) => rt.settings.setProactive(body));
 
   // ------------------------------------------------------------- OpenRouter
   r.on('GET', '/api/provider', async () => ({
@@ -553,13 +656,19 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
   });
 
   // ------------------------------------------------------------- memory
-  r.on('GET', '/api/memory', ({ query }) =>
-    store.searchMemory({
-      text: query.get('search') ?? undefined,
-      kind: query.get('kind') ? MemoryKind.parse(query.get('kind')) : undefined,
-      limit: 200,
-    }),
-  );
+  r.on('GET', '/api/memory', async ({ query }) => {
+    const text = query.get('search')?.trim();
+    const kind = query.get('kind') ? MemoryKind.parse(query.get('kind')) : undefined;
+    // With a query, the same hybrid ranking as memory.search (BM25 + vectors when available).
+    return text
+      ? rt.memoryIndex.search({ text, kind, limit: 100 })
+      : store.searchMemory({ kind, limit: 200 });
+  });
+  r.on('GET', '/api/memory/index', () => ({ ...rt.memoryIndex.status(), settings: rt.settings.memory() }));
+  r.on('PUT', '/api/memory/settings', ({ body }) => {
+    const m = rt.settings.setMemory(body);
+    return { ...rt.memoryIndex.status(), settings: m, restartRequired: true };
+  });
   r.on('POST', '/api/memory', ({ body }) => {
     const b = z
       .object({
@@ -568,7 +677,9 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
         tags: z.array(z.string().max(40)).max(10).default([]),
       })
       .parse(body);
-    return store.addMemory({ ...b, origin: 'user', confidence: 1 });
+    const entry = store.addMemory({ ...b, origin: 'user', confidence: 1 });
+    rt.memoryIndex.schedule();
+    return entry;
   });
   r.on('PATCH', '/api/memory/:id', ({ params, body }) => {
     const b = z
@@ -579,7 +690,9 @@ export function buildRoutes(rt: HermesRuntime, meta: { version: string; startupM
         kind: MemoryKind.optional(),
       })
       .parse(body);
-    return store.updateMemory(params.id!, b);
+    const entry = store.updateMemory(params.id!, b);
+    rt.memoryIndex.schedule();
+    return entry;
   });
   r.on('DELETE', '/api/memory', ({ body }) => {
     const { ids } = z.object({ ids: z.array(z.string()).min(1).max(500) }).parse(body);

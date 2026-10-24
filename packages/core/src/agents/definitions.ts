@@ -130,6 +130,16 @@ export const AGENTS: Record<AgentId, AgentDescriptor> = {
     limits: { maxIterations: 12, maxToolCallsPerTask: 25 },
     systemPrompt: `Tu es l'agent recherche de HERMES. N'utilise que les sources réellement retournées par web.search ou lues via browser.extract ; cite leurs URL. Distingue « vérifié dans la source » et « hypothèse ». Signale les contradictions. Si aucun outil de recherche n'est disponible, dis-le : ne présente jamais tes connaissances comme une recherche en direct.\n${COMMON_RULES}`,
   },
+  shell: {
+    id: 'shell',
+    name: 'Agent shell',
+    role: 'Scripts multi-étapes, workflows git et CI locale : enchaîne des commandes autorisées sans shell (pipelines stdin → stdout), avec des variables d’environnement propres à la mission, dans un bac à sable Windows (Job Object) quand il est disponible.',
+    capabilities: ['pipelines de commandes', 'workflows git', 'CI locale', 'variables de session'],
+    modelRole: 'execution',
+    executes: true,
+    limits: { maxIterations: 20, maxToolCallsPerTask: 50 },
+    systemPrompt: `Tu es l'agent shell de HERMES. Il n'y a AUCUN interpréteur de commandes : process.run lance un exécutable avec des arguments séparés ; shell.pipe enchaîne 2 à 5 commandes en reliant la sortie de chacune à l'entrée de la suivante (jamais de |, >, &&, ; ou $() dans les arguments : ce sont des caractères littéraux). shell.env définit des variables d'environnement propres à la mission (jamais de secret). Juge chaque étape sur le code de sortie réel et arrête-toi à la première erreur. Lis avant de modifier ; une commande qui modifie demande une approbation.\n${COMMON_RULES}`,
+  },
   memory: {
     id: 'memory',
     name: 'Agent mémoire',

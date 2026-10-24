@@ -208,3 +208,73 @@ export interface VoiceCatalog {
 }
 
 export type { VoiceServerEvent } from '@hermes/core/contracts';
+
+// ------------------------------------------------------------------ proactive missions
+export type TriggerSpec =
+  | { kind: 'cron'; expression: string }
+  | { kind: 'interval'; minutes: number }
+  | {
+      kind: 'event';
+      event: 'created' | 'changed' | 'any';
+      path: string;
+      pattern: string;
+      recursive: boolean;
+      cooldownSec: number;
+    }
+  | {
+      kind: 'condition';
+      condition: 'mission_failed';
+      sourceTriggerId: string | null;
+      maxRetries: number;
+      delayMinutes: number;
+    };
+
+export interface ScheduledTrigger {
+  id: string;
+  name: string;
+  kind: TriggerSpec['kind'];
+  spec: TriggerSpec;
+  missionTemplate: string;
+  budget: { maxCostUsd?: number; maxAiCalls?: number; maxToolCalls?: number; maxDurationSec?: number };
+  enabled: boolean;
+  autoStart: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastMissionId: string | null;
+  lastError: string | null;
+  runCount: number;
+  createdAt: string;
+  description: string;
+  upcoming: string[];
+}
+
+export interface ProactiveSettings {
+  enabled: boolean;
+  maxCostUsd: number;
+  maxRunsPerDay: number;
+  desktopNotifications: boolean;
+}
+
+export interface TriggerRun {
+  id: string;
+  triggerId: string;
+  missionId: string | null;
+  firedAt: string;
+  reason: string;
+  status: string;
+  error: string | null;
+  attempt: number;
+  request: string | null;
+  mission: {
+    id: string;
+    status: string;
+    usage: { costUsd: number; costKnown: boolean };
+    endedAt: string | null;
+  } | null;
+}
+
+export interface TriggersState {
+  triggers: ScheduledTrigger[];
+  status: { running: boolean; watching: number; settings: ProactiveSettings; launchedLast24h: number };
+  variables: string[];
+}
